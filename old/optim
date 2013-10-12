@@ -1,0 +1,223 @@
+import bnmodels.mcmc as mcmc
+import bnmodels.ndict as ndict
+import bnmodels.BNModel as BNModel
+import numpy as np
+import scipy.optimize
+import PIL.Image
+import paramgraphics
+import time
+
+log = {
+	'acceptRate': [1],
+	'loglik': []
+}	
+
+def loop_minibatch(dostep, w, z, x, n_batch, hook, hook_wavelength=2, n_iters=9999999):
+	n_samples = x.values()[-1].shape[1]
+	
+	t_prev = time.time()
+	
+	# Train loop
+	for t in xrange(n_iters):
+		i = (t*(n_batch))%n_samples
+		
+		_z = ndict.getCols(z, i, i+n_batch)
+		_x = ndict.getCols(x, i, i+n_batch)
+		dostep(w, _z, _x, i, i+n_batch)
+		ndict.setCols(z, i, i+n_batch, _z)
+		
+		if time.time() - t_prev > hook_wavelength:
+			hook(t, w, z)
+			t_prev = time.time()
+
+# EXPERIMENTAL NIPS-PAPER EM
+def step_batch_mcem(model_e, model_m, _w, _z, hmc_leapsize=1e-2, hmc_leaps=20, m_steps=1, m_freq=1, adagrad_stepsize=0.1):
+	print 'NIPS EM', hmc_leapsize, hmc_leaps, m_steps, adagrad_stepsize
+	
+	dostep_adagrad = step_adagrad(model_m, _w, _z, stepsize_w=adagrad_stepsize, stepsize_z=0)
+	#dostep_adadelta = step_adadelta_w(model_m, _w)
+	
+	zs = ndict.cloneZeros(model_m.init_z())
+	istep = [0]
+	
+	def doStep(w, z, x, ifrom, ito):
+		
+		# HMC sampler step
+		def f_z(_z):
+			return model_e.logpxz(w, _z, x)
+		def fprime_z(_z):
+			_, gz = model_e.grad_z(w, _z, x)
+			return gz
+		acceptRate = mcmc.batch_hmc_step(f_z, fprime_z, z, hmc_leapsize, hmc_leaps)
+		log['acceptRate'].append(acceptRate)
+		
+		# Put sample 'z' in 'zs'
+		samplecol = int(istep[0] % model_m.n_mc)
+		for i in z:
+			numfeatures = zs[i].shape[0]
+			zsi = zs[i].reshape((numfeatures * model_m.n_batch, model_m.n_mc))
+			zsi[:,samplecol:samplecol+1] = z[i].reshape((numfeatures * model_m.n_batch, 1))
+			
+		# ADAGRAD step
+		xtiled = model_m.tiled_x(x)
+		if istep[0] >= model_m.n_mc and istep[0] % m_freq is 0:
+			for i in range(m_steps):
+				dostep_adagrad(w, zs, xtiled, ifrom, ito)
+				#dostep_adadelta(w, zs, xtiled, ifrom, ito)
+				
+		istep[0] += 1
+		
+	return doStep
+	
+def step_batch_mcbn(model, _w, xtiled, adagrad_stepsize=0.1):
+	print 'MCBN', adagrad_stepsize
+	dostep_adagrad = step_adagrad(model, _w, None, stepsize_w=adagrad_stepsize, stepsize_z=0)
+	def doStep(w, z, x, ifrom, ito):
+		dostep_adagrad(w, None, xtiled, ifrom, ito)
+	return doStep
+
+# PLAIN SGD STEP
+def step_sgd(model, w_stepsize=1e-2, z_stepsize=1e-2):
+	print 'SGD', w_stepsize, z_stepsize
+	
+	def doStep(w, z, x, ifrom, ito):
+		# SGD
+		logLik, gw, gz = model.grad_wz(w, z, x)
+		log['loglik'].append(logLik)
+		for i in w:
+			w[i] += w_stepsize / model.n_batch * gw[i]
+		for i in z:
+			z[i] += z_stepsize / model.n_batch * gz[i]
+	
+	return doStep
+
+# from: "ADADELTA: AN ADAPTIVE LEARNING RATE METHOD"
+# http://www.matthewzeiler.com/pubs/googleTR2012/googleTR2012.pdf
+# Matthew D. Zeiler (2012)	
+def step_adadelta_wz(model, w, z, gamma=0.05, eps=1e-6):
+	print 'Adadelta', gamma, eps
+	
+	# mean square of gradients and delta's of z's and w's
+	gw_ms = ndict.cloneZeros(w)
+	dw_ms = ndict.cloneZeros(w)
+	dw = ndict.cloneZeros(w)
+	
+	_gz_ms = ndict.cloneZeros(z)
+	_dz_ms = ndict.cloneZeros(z)
+	_dz = ndict.cloneZeros(z)
+	
+	def doStep(w, z, x, ifrom, ito):
+		
+		gz_ms, dz_ms, dz = ndict.getcols_multiple((_gz_ms, _dz_ms, _dz), ifrom, ito)
+		
+		# Adadelta
+		logLik, gw, gz = model.grad_wz(w, z, x)
+		log['loglik'].append(logLik)
+		
+		for i in w:
+			gw_ms[i] += gamma*(gw[i]**2 - gw_ms[i])
+			dw[i] = np.sqrt(dw_ms[i] + eps)/np.sqrt(gw_ms[i] + eps) * gw[i]
+			w[i] += dw[i]
+			dw_ms[i] += gamma*(dw[i]**2 - dw_ms[i])
+		
+		for i in z:
+			gz_ms[i] += gamma*(gz[i]**2 - gz_ms[i])
+			dz[i] = np.sqrt(dz_ms[i] + eps)/np.sqrt(gz_ms[i] + eps) * gz[i]
+			z[i] += dz[i]
+			dz_ms[i] += gamma*(dz[i]**2 - dz_ms[i])
+		
+	return doStep
+
+def step_adadelta_w(model, w, gamma=0.05, eps=1e-6):
+	print 'Adadelta', gamma, eps
+	
+	# mean square of gradients and delta's of z's and w's
+	gw_ms = ndict.cloneZeros(w)
+	dw_ms = ndict.cloneZeros(w)
+	dw = ndict.cloneZeros(w)
+	
+	def doStep(w, z, x, ifrom, ito):
+		
+		# Adadelta
+		logLik, gw = model.grad_w(w, z, x)
+		log['loglik'].append(logLik)
+		
+		for i in w:
+			gw_ms[i] += gamma*(gw[i]**2 - gw_ms[i])
+			dw[i] = np.sqrt(dw_ms[i] + eps)/np.sqrt(gw_ms[i] + eps) * gw[i]
+			w[i] += dw[i]
+			dw_ms[i] += gamma*(dw[i]**2 - dw_ms[i])
+		
+	return doStep
+
+# from: "Adaptive Subgradient Methods for Online Learning and Stochastic Optimization"
+# John Duchi et al (2010)
+def step_adagrad(model, w, z, stepsize_w=1e-1, stepsize_z=1e-1):
+	print 'Adagrad', stepsize_w, stepsize_z
+	
+	# sum of squares of gradients and delta's of z's and w's
+	if stepsize_w > 0:
+		gw_ss = ndict.cloneZeros(w)
+	if stepsize_z > 0:
+		_gz_ss = ndict.cloneZeros(z)
+	
+	def doStep(w, z, x, ifrom, ito):
+		
+		# Adagrad
+		logLik, gw, gz = model.grad_wz(w, z, x)
+		log['loglik'].append(logLik)
+		
+		if stepsize_w > 0:
+			for i in gw:
+				gw_ss[i] += gw[i]**2
+				w[i] += stepsize_w / np.sqrt(gw_ss[i]) * gw[i]
+			
+		if stepsize_z > 0:
+			gz_ss = ndict.getCols(_gz_ss, ifrom, ito)
+			for i in gz:
+				gz_ss[i] += gz[i]**2
+				z[i] += stepsize_z / np.sqrt(gz_ss[i]) * gz[i]
+		
+	return doStep
+
+
+def lbfgs(model, w, z, x, hook=None, maxiter=None):
+	
+	def f(y):
+		_w, _z = ndict.unflatten_multiple(y, [w, z])
+		joint = model.joint(_w, _z, x)
+		log['loglik'].append(joint)
+		#print joint.mean()
+		return - joint.mean()
+	
+	def fprime(y):
+		_w, _z = ndict.unflatten_multiple(y, [w, z])
+		joint, gw, gz = model.grad_wz(_w, _z, x)
+		#print '==================='
+		#print '=>', joint, np.min(model.logpxz(_w, _z, x)), np.min(model.mclik(_w, x))
+		#print '==================='
+		gwz = ndict.flatten_multiple((gw, gz))
+		return - gwz
+	
+	t = [0, 0, time.time()]
+	def callback(wz):
+		if hook is None: return
+		#t[0] += 1
+		#if t[0]%5 is not 0: return
+		#if time.time() - t[2] < 1: return
+		#t[2] = time.time()
+		_w, _z = ndict.unflatten_multiple(wz, (w, z))
+		t[1] += 1
+		hook(t[1], _w, _z)
+	
+	x0 = ndict.flatten_multiple((w, z))
+	xn, f, d = scipy.optimize.fmin_l_bfgs_b(func=f, x0=x0, fprime=fprime, m=100, iprint=0, callback=callback, maxiter=maxiter)
+	
+	#scipy.optimize.fmin_cg(f=f, x0=x0, fprime=fprime, full_output=True, callback=hook)
+	#scipy.optimize.fmin_ncg(f=f, x0=x0, fprime=fprime, full_output=True, callback=hook)
+	w, z = ndict.unflatten_multiple(xn, (w, z))
+	if d['warnflag'] is 2:
+		print 'warnflag:', d['warnflag']
+		print d['task']
+	return w, z
+	
