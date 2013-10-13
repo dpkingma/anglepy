@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
-import bnmodels.ndict as ndict
-import bnmodels.BNModel as BNModel
+import anglepy.ndict as ndict
+import anglepy.BNModel as BNModel
 import hmc
 import time
 

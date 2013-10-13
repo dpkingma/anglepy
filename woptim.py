@@ -1,6 +1,6 @@
-import bnmodels.hmc as hmc
-import bnmodels.ndict as ndict
-import bnmodels.BNModel as BNModel
+import anglepy.hmc as hmc
+import anglepy.ndict as ndict
+import anglepy.BNModel as BNModel
 import numpy as np
 import scipy.optimize
 import PIL.Image

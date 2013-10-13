@@ -2,10 +2,10 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.logpdfs
-import bnmodels.BNModel as BNModel
+import anglepy.logpdfs
+import anglepy.BNModel as BNModel
 import math, inspect
-import bnmodels.ndict as ndict
+import anglepy.ndict as ndict
 import sys
 
 '''
@@ -36,7 +36,7 @@ class DBN_scan(BNModel.BNModel):
 		z = {'eps':T.dtensor3('eps')}
 		x = {'x':T.dtensor3('x')}
 		
-		return w, z, x
+		return w, x, z
 	
 	def factors(self, w, z, x):
 		
@@ -76,11 +76,11 @@ class DBN_scan(BNModel.BNModel):
 		logpx = logpxs.sum(axis=0).sum(axis=0, keepdims=True)
 		
 		# Factors of Z
-		logpz = bnmodels.logpdfs.standard_normal(z['eps']).sum(axis=0).sum(axis=0, keepdims=True)
+		logpz = anglepy.logpdfs.standard_normal(z['eps']).sum(axis=0).sum(axis=0, keepdims=True)
 		
 		logpw = 0
 		for i in w:
-			logpw += bnmodels.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
+			logpw += anglepy.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
 		
 		return logpx, logpz, logpw
 	

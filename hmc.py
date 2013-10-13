@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import bnmodels.ndict as ndict
+import anglepy.ndict as ndict
 import scipy.stats
 import time
 
@@ -291,7 +291,7 @@ http://arxiv.org/pdf/1205.1925v1.pdf
 
 # Test the variance estimate
 def test_variance_estimate():
-	import bnmodels.models.DBN as DBN
+	import anglepy.models.DBN as DBN
 	import math
 	n_steps_dbn=1
 	n_dims=64
@@ -320,7 +320,7 @@ def test_variance_estimate():
 	return
 
 def test_variance_estimate2():
-	import bnmodels.models.DBN as DBN
+	import anglepy.models.DBN as DBN
 	import math
 	n_steps_dbn=1
 	n_dims=64

@@ -2,8 +2,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.BNModel as BNModel
-import bnmodels.logpdfs as logpdfs
+import anglepy.BNModel as BNModel
+import anglepy.logpdfs as logpdfs
 import math, inspect
 from theano.tensor.shared_randomstreams import RandomStreams
 
@@ -83,7 +83,7 @@ def create(n_z, n_x, n_steps, n_batch, prior_sd=0.1):
 			z['z'+str(i)] = T.dmatrix('z'+str(i))
 			x['x'+str(i)] = T.dmatrix('x'+str(i))
 			
-		return w, z, x
+		return w, x, z
 	
 	theano_warning = 'raise'
 	if n_steps == 1: theano_warning = 'warn'

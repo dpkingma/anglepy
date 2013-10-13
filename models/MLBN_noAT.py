@@ -2,8 +2,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.BNModel as BNModel
-import bnmodels.logpdfs as logpdfs
+import anglepy.BNModel as BNModel
+import anglepy.logpdfs as logpdfs
 import math, inspect
 
 def create(n_hidden, n_output, n_batch, prior_sd=1):
@@ -56,7 +56,7 @@ def create(n_hidden, n_output, n_batch, prior_sd=1):
 		x = {}
 		x['x'] = T.dmatrix('x')
 		
-		return w, z, x
+		return w, x, z
 	
 	# Confabulate latent variables
 	def gen_xz(w, x, z):

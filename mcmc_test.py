@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import bnmodels.ndict as ndict
-import bnmodels.mcmc
+import anglepy.ndict as ndict
+import anglepy.mcmc
 import theano.tensor as T
 import theano
 
@@ -42,8 +42,8 @@ def mcmc_test():
 		return v, {'x':grad}
 	
 	stepsize = [1e-6]
-	dostep = bnmodels.mcmc.hmc_step_autotune(n_steps=20)
-	#dostep = bnmodels.mcmc.hmc_step_autotune2(n_steps=20)
+	dostep = anglepy.mcmc.hmc_step_autotune(n_steps=20)
+	#dostep = anglepy.mcmc.hmc_step_autotune2(n_steps=20)
 	def mcmc_dostep(_x):
 		return dostep(f, fgrad, _x)
 	

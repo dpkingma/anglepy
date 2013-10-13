@@ -2,8 +2,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.BNModel as BNModel
-import bnmodels.logpdfs as theano_funcs
+import anglepy.BNModel as BNModel
+import anglepy.logpdfs as theano_funcs
 import math, inspect
 
 class Model(BNModel.BNModel):
@@ -100,7 +100,7 @@ class Model(BNModel.BNModel):
 		x = {}
 		x['x'] = T.dmatrix('x')
 		
-		return w, z, x
+		return w, x, z
 	
 	def init_w(self, std=1e-2):
 		w = {}

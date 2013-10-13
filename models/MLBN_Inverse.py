@@ -2,10 +2,10 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.BNModel as BNModel
-import bnmodels.logpdfs as theano_funcs
+import anglepy.BNModel as BNModel
+import anglepy.logpdfs as theano_funcs
 import math, inspect
-import bnmodels.ndict as ndict
+import anglepy.ndict as ndict
 
 class Model(BNModel.BNModel):
 	def __init__(self, n_units, n_batch, prior_sd=1):
@@ -94,7 +94,7 @@ class Model(BNModel.BNModel):
 		z = {}
 		z['eps0'] = T.dmatrix('eps0')
 		
-		return w, z, x
+		return w, x, z
 	
 	def init_w(self, std=1e-2):
 		w = {}

@@ -2,8 +2,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.BNModel as BNModel
-import bnmodels.logpdfs as logpdfs
+import anglepy.BNModel as BNModel
+import anglepy.logpdfs as logpdfs
 import math, inspect
 
 # Fast MLBN
@@ -91,7 +91,7 @@ def create(n_hidden, n_output, n_batch, prior_sd=0.1, noMiddleEps=False):
 		x = {}
 		x['x'] = T.dmatrix('x')
 		
-		return w, z, x
+		return w, x, z
 	
 	# Confabulate hidden states 'z'
 	def gen_xz(w, x, z):

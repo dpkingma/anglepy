@@ -2,8 +2,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import bnmodels.logpdfs
-import bnmodels.BNModel as BNModel
+import anglepy.logpdfs
+import anglepy.BNModel as BNModel
 import math, inspect
 from theano.tensor.shared_randomstreams import RandomStreams
 
@@ -46,13 +46,13 @@ class DBN(BNModel.BNModel):
 		# Factors of Z
 		logpz = 0
 		for i in z:
-			logpz += bnmodels.logpdfs.standard_normal(z[i]).sum(axis=0, keepdims=True) # logp(z)
+			logpz += anglepy.logpdfs.standard_normal(z[i]).sum(axis=0, keepdims=True) # logp(z)
 		
 		# joint() = logp(x,z,w) = logp(x|z) + logp(z) + logp(w) + C
 		# This is a proper scalar function
 		logpw = 0
 		for i in w:
-			logpw += bnmodels.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
+			logpw += anglepy.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
 		
 		return logpx, logpz, logpw
 
@@ -102,6 +102,6 @@ class DBN(BNModel.BNModel):
 			z['eps'+str(i)] = T.dmatrix('eps'+str(i))
 			x['x'+str(i)] = T.dmatrix('x'+str(i))
 			
-		return w, z, x
+		return w, x, z
 	
 	

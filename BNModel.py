@@ -3,8 +3,8 @@ import theano
 import theano.tensor as T
 import math
 import theano.compile
-import bnmodels.ndict as ndict
-import bnmodels.logpdfs
+import anglepy.ndict as ndict
+import anglepy.logpdfs
 import inspect
 
 # Lazy function compilation
@@ -33,12 +33,11 @@ class BNModel(object):
 		
 		# Create theano expressions
 		# TODO: change order to (w, x, z) everywhere
-		w, z, x = ordereddicts(self.variables())
-		self.var_w, self.var_z, self.var_x, = w, z, x
+		w, x, z = ordereddicts(self.variables())
+		self.var_w, self.var_x, self.var_z, = w, x, z
 		
 		# Get gradient symbols
 		allvars = w.values() + z.values() + x.values() # note: '+' concatenates lists
-		
 		
 		if hessian:
 			# Have to convert to vector and back to matrix because of stupid Theano hessian requirement
@@ -346,7 +345,7 @@ class FuncLikelihoodPar():
 		commands = [
 				'import os; cwd = os.getcwd()',
 				'import sys; sys.path.append(\'../shared\')',
-				'import bnmodels.ndict as ndict',
+				'import anglepy.ndict as ndict',
 				'import '+module,
 				'my_model='+module+'.'+function+'(**args)'
 		]
