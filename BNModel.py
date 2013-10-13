@@ -67,7 +67,7 @@ class BNModel(object):
 			for i in _x: x[i].tag.test_value = _x[i]
 			for i in _z: z[i].tag.test_value = _z[i]
 
-		logpx, logpz, logpw = self.factors(w, z, x)
+		logpw, logpx, logpz = self.factors(w, x, z)
 		
 		# Complete-data likelihood estimate
 		logpxz = logpx.sum() + logpz.sum()
@@ -132,6 +132,7 @@ class BNModel(object):
 			ndict.p(w)
 			ndict.p(z)
 			raise Exception("dlogpxz_dwz(): NaN found in gradients")
+		
 		return logpx, logpz
 	
 	# Gradient of logp(x,z|w) w.r.t. parameters and latent variables

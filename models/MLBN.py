@@ -2,11 +2,12 @@ import numpy as np
 import theano
 import theano.tensor as T
 import collections as C
-import anglepy.BNModel as BNModel
-import anglepy.logpdfs as theano_funcs
+import anglepy as ap
+
 import math, inspect
 
-class Model(BNModel.BNModel):
+class Model(ap.BNModel):
+	
 	def __init__(self, n_hidden, n_output, n_batch, prior_sd=1, noMiddleEps=False):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
 		self.n_hidden = n_hidden
@@ -16,7 +17,7 @@ class Model(BNModel.BNModel):
 		self.noMiddleEps = noMiddleEps
 		super(Model, self).__init__(n_batch)
 	
-	def factors(self, w, z, x):
+	def factors(self, w, x, z):
 		
 		A = np.ones((1, self.n_batch))
 	
@@ -41,17 +42,17 @@ class Model(BNModel.BNModel):
 		# Note: logpz is a row vector (one element per sample)
 		logpz = 0
 		for i in z:
-			logpz += theano_funcs.standard_normal(z[i]).sum(axis=0) # logp(z)
+			logpz += ap.logpdfs.standard_normal(z[i]).sum(axis=0) # logp(z)
 		
 		# Note: logpw is a scalar
 		def f_prior(_w):
-			return theano_funcs.normal(_w, 0, self.prior_sd).sum()
+			return ap.logpdfs.normal(_w, 0, self.prior_sd).sum()
 		logpw = 0
 		for i in range(1, len(self.n_hidden)):
 			logpw += f_prior(w['w%i'%i])
 		logpw += f_prior(w['wout'])
 		
-		return logpx, logpz, logpw
+		return logpw, logpx, logpz
 	
 	# Confabulate latent variables
 	def gen_xz(self, w, x, z):
@@ -78,7 +79,7 @@ class Model(BNModel.BNModel):
 			x['x'] = np.random.binomial(n=1,p=p)
 		
 		return x, z, _z
-
+	
 	def variables(self):
 		# Define parameters 'w'
 		w = {}

@@ -18,7 +18,7 @@ class Model(BNModel.BNModel):
 		self.logmeanb_factor = 1
 		super(Model, self).__init__(n_batch, 'ignore')
 		
-	def factors(self, w, z, x):
+	def factors(self, w, x, z):
 		
 		# Define symbolic program
 		A = np.ones((1, self.n_batch))
@@ -49,7 +49,7 @@ class Model(BNModel.BNModel):
 		logpw += f_prior(w['w_mean'])
 		logpw += f_prior(w['w_logvar'])
 		
-		return logpx, logpz, logpw
+		return logpw, logpx, logpz
 	
 	# Confabulate hidden states 'z'
 	def gen_xz(self, w, x, z):

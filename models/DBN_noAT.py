@@ -38,7 +38,7 @@ def create(n_z, n_x, n_steps, n_batch, prior_sd=0.1):
 		for i in w:
 			logpw += logpdfs.normal(w[i], 0, prior_sd).sum() # logp(w)
 		
-		return logpx, logpz, logpw
+		return logpw, logpx, logpz
 	
 	# Confabulate latent variables 'x' and 'z'
 	def gen_xz(w, x, z):

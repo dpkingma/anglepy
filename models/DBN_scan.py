@@ -38,7 +38,7 @@ class DBN_scan(BNModel.BNModel):
 		
 		return w, x, z
 	
-	def factors(self, w, z, x):
+	def factors(self, w, x, z):
 		
 		def pr(str, _x):
 			return theano.printing.Print(str)(_x)
@@ -82,7 +82,7 @@ class DBN_scan(BNModel.BNModel):
 		for i in w:
 			logpw += anglepy.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
 		
-		return logpx, logpz, logpw
+		return logpw, logpx, logpz
 	
 	# Numpy <-> Theano var conversion
 	def xz_to_theano(self, x, z):

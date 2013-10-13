@@ -20,7 +20,7 @@ class DBN(BNModel.BNModel):
 		super(DBN, self).__init__(n_batch, theano_warning)
 	
 	
-	def factors(self, w, z, x):
+	def factors(self, w, x, z):
 		A = np.ones((1, self.n_batch))
 	
 		def f_xi(zi, xi):
@@ -54,7 +54,7 @@ class DBN(BNModel.BNModel):
 		for i in w:
 			logpw += anglepy.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
 		
-		return logpx, logpz, logpw
+		return logpw, logpx, logpz
 
 	# Confabulate hidden states 'z'
 	def gen_xz(self, w, x, z):
