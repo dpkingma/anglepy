@@ -189,6 +189,7 @@ def step_pvem(model_pred, model_gen, x, w_pred, n_batch=100, ada_stepsize=1e-1, 
 					gw_ss[i] += gw[i]**2
 					if nsteps[0] > warmup:
 						w[i] += stepsize / np.sqrt(gw_ss[i]+reg) * gw[i]
+					#print (stepsize / np.sqrt(gw_ss[i]+reg)).mean()
 			else:
 				for i in gw:
 					w[i] += 1e-4 * gw[i]

@@ -41,16 +41,16 @@ class BNModel(object):
 		# Get gradient symbols
 		allvars = w.values()  + x.values() + z.values() + [A] # note: '+' concatenates lists
 		
-		if hessian:
+		if False and hessian:
 			# Hessian of logpxz wrt z
-			# WARNING: assumes n_batch=1
-			# Untested after refactoring!
+			raise Exception("Needs fix: assumes fixed n_batch, which is not true anymore")
+			n_batch = 100
 			
 			# Have to convert to vector and back to matrix because of stupid Theano hessian requirement
 			z_concat = T.concatenate([T.flatten(z[i]) for i in z])
 			
 			# Translate back, we need the correct dimensions
-			_, _z, _ = self.gen_xz(self.init_w(), {}, {}, n_batch=1)
+			_, _z, _ = self.gen_xz(self.init_w(), {}, {}, n_batch=n_batch)
 			shape_z = {i:_z[i].shape for i in _z}
 			z = {}
 			pointer = 0
@@ -110,7 +110,7 @@ class BNModel(object):
 			dfd_dw = T.grad(fd, w.values())
 			self.f_dfd_dw = theanofunction(allvars + gz2, [logpx, logpz, fd] + dfd_dw)
 			
-		if hessian:
+		if False and hessian:
 			# Hessian of logpxz wrt z (works best with n_batch=1)
 			hessian_z = theano.gradient.hessian(logpxz, z_concat)
 			self.f_hessian_z = theanofunction(allvars, hessian_z)
