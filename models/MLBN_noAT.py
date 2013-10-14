@@ -6,7 +6,9 @@ import anglepy.BNModel as BNModel
 import anglepy.logpdfs as logpdfs
 import math, inspect
 
-def create(n_hidden, n_output, n_batch, prior_sd=1):
+def create(n_hidden, n_output, prior_sd=1):
+	raise Exception("Needs refactoring!")
+
 	constr = (__name__, inspect.stack()[0][3], locals())
 	
 	A = np.ones((1, n_batch))

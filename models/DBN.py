@@ -7,7 +7,7 @@ import anglepy.BNModel as BNModel
 import math, inspect
 from theano.tensor.shared_randomstreams import RandomStreams
 
-class DBN(BNModel.BNModel):
+class DBN(BNModel):
 	
 	def __init__(self, n_z, n_x, n_steps, n_batch, prior_sd=0.1):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
@@ -20,9 +20,8 @@ class DBN(BNModel.BNModel):
 		super(DBN, self).__init__(n_batch, theano_warning)
 	
 	
-	def factors(self, w, x, z):
-		A = np.ones((1, self.n_batch))
-	
+	def factors(self, w, x, z, A):
+		
 		def f_xi(zi, xi):
 			pi = T.nnet.sigmoid(T.dot(w['wx'], zi) + T.dot(w['bx'], A)) # pi = p(X_i=1)
 			logpxi = - T.nnet.binary_crossentropy(pi, xi).sum(axis=0, keepdims=True)# logpxi = log p(X_i=x_i)

@@ -1,1 +1,1 @@
-from anglepy.BNModel import BNModel
+from anglepy.BNModel import *

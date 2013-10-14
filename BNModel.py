@@ -26,8 +26,7 @@ def lazytheanofunc(on_unused_input='warn', mode='FAST_RUN'):
 # Model
 class BNModel(object):
 	
-	def __init__(self, n_batch, theano_warning='raise', hessian=True):
-		self.n_batch = n_batch
+	def __init__(self, theano_warning='raise', hessian=True):
 		
 		theanofunction = lazytheanofunc('warn', mode='FAST_RUN')
 		
@@ -36,15 +35,22 @@ class BNModel(object):
 		w, x, z = ordereddicts(self.variables())
 		self.var_w, self.var_x, self.var_z, = w, x, z
 		
+		# Helper variables
+		A = T.dmatrix('A') #np.ones((1, self.n_batch))
+		
 		# Get gradient symbols
-		allvars = w.values() + z.values() + x.values() # note: '+' concatenates lists
+		allvars = w.values()  + x.values() + z.values() + [A] # note: '+' concatenates lists
 		
 		if hessian:
+			# Hessian of logpxz wrt z
+			# WARNING: assumes n_batch=1
+			# Untested after refactoring!
+			
 			# Have to convert to vector and back to matrix because of stupid Theano hessian requirement
 			z_concat = T.concatenate([T.flatten(z[i]) for i in z])
 			
 			# Translate back, we need the correct dimensions
-			_, _z, _ = self.gen_xz(self.init_w(), {}, {})
+			_, _z, _ = self.gen_xz(self.init_w(), {}, {}, n_batch=1)
 			shape_z = {i:_z[i].shape for i in _z}
 			z = {}
 			pointer = 0
@@ -62,12 +68,12 @@ class BNModel(object):
 			theano.config.compute_test_value = 'raise'
 			_w = self.init_w()
 			for i in _w: w[i].tag.test_value = _w[i]
-			_x, _z, _ = self.gen_xz(_w, {}, {})
+			_x, _z, _ = self.gen_xz(_w, {}, {}, 10)
 			_x, _z = self.xz_to_theano(_x, _z)
 			for i in _x: x[i].tag.test_value = _x[i]
 			for i in _z: z[i].tag.test_value = _z[i]
-
-		logpw, logpx, logpz = self.factors(w, x, z)
+		
+		logpw, logpx, logpz = self.factors(w, x, z, A)
 		
 		# Complete-data likelihood estimate
 		logpxz = logpx.sum() + logpz.sum()
@@ -86,6 +92,7 @@ class BNModel(object):
 		self.f_dlogpw_dw = theanofunction(w.values(), [logpw] + dlogpw_dw)
 		
 		if False:
+			raise Exception("Code block needs refactoring: n_batch no longer a field of the model")
 			# MC-LIKELIHOOD
 			logpx_max = logpx.max()
 			logpxmc = T.log(T.exp(logpx - logpx_max).sum()) + logpx_max - math.log(n_batch)
@@ -108,7 +115,6 @@ class BNModel(object):
 			hessian_z = theano.gradient.hessian(logpxz, z_concat)
 			self.f_hessian_z = theanofunction(allvars, hessian_z)
 		
-		
 	# NOTE: IT IS ESSENTIAL THAT DICTIONARIES OF SYMBOLIC VARS AND RESPECTIVE NUMPY VALUES HAVE THE SAME KEYS
 	# (OTHERWISE FUNCTION ARGUMENTS ARE IN INCORRECT ORDER)
 	
@@ -121,11 +127,14 @@ class BNModel(object):
 	def xz_to_theano(self, x, z): return x, z
 	def gwgz_to_numpy(self, gw, gz): return gw, gz
 	
+	# A = np.ones((1, n_batch))
+	def get_A(self, x): return np.ones((1, x.itervalues().next().shape[1]))
+		
 	# Likelihood: logp(x,z|w)
 	def logpxz(self, w, z, x):
 		_x, _z = self.xz_to_theano(x, z)
-		
-		logpx, logpz = self.f_logpxz(*orderedvals((w, _z, _x)))
+		A = self.get_A(x)
+		logpx, logpz = self.f_logpxz(*orderedvals((w, _x, _z))+[A])
 		if np.isnan(logpx).any() or np.isnan(logpz).any():
 			print 'v: ', logpx, logpz
 			print 'Values:'
@@ -139,8 +148,8 @@ class BNModel(object):
 	def dlogpxz_dwz(self, w, z, x):
 		x, z = self.xz_to_theano(x, z)
 		w, z, x = ordereddicts((w, z, x))
-		
-		r = self.f_dlogpxz_dwz(*(w.values() + z.values() + x.values()))
+		A = self.get_A(x)
+		r = self.f_dlogpxz_dwz(*(w.values() + x.values() + z.values() + [A]))
 		logpx, logpz, gw, gz = r[0], r[1], dict(zip(w.keys(), r[2:2+len(w)])), dict(zip(z.keys(), r[2+len(w):]))
 		
 		if ndict.hasNaN(gw) or ndict.hasNaN(gz):
@@ -181,7 +190,8 @@ class BNModel(object):
 	# Hessian of logpxz wrt z (works best with n_batch=1)
 	def hessian_z(self, w, z, x):
 		x, z = self.xz_to_theano(x, z)
-		return self.f_hessian_z(*orderedvals((w, z, x)))
+		A = self.get_A(x)
+		return self.f_hessian_z(*orderedvals((w, x, z))+[A])
 
 	# Prior: logp(w)
 	def logpw(self, w):
@@ -195,26 +205,28 @@ class BNModel(object):
 		return r[0], dict(zip(w.keys(), r[1:]))
 	
 	# MC likelihood: logp(x|w)
-	def logpxmc(self, w, x):
-		x = self.tiled_x(x)
-		x, z, _ = self.gen_xz(w, x, {})
+	def logpxmc(self, w, x, n_batch):
+		x = self.tiled_x(x, n_batch)
+		x, z, _ = self.gen_xz(w, x, {}, n_batch=x.shape[1])
 		x, z = self.xz_to_theano(x, z)
-		return self.f_logpxmc(*orderedvals((w, z, x)))
+		A = self.get_A(x)
+		return self.f_logpxmc(*orderedvals((w, x, z))+[A])
 	
 	# Gradient of MC likelihood logp(x|w) w.r.t. parameters
-	def dlogpxmc_dw(self, w, x):
-		x = self.tiled_x(x)
-		x, z, _ = self.gen_xz(w, x, {})
+	def dlogpxmc_dw(self, w, x, n_batch):
+		x = self.tiled_x(x, n_batch)
+		x, z, _ = self.gen_xz(w, x, {}, n_batch=x.shape[1])
 		x, z = self.xz_to_theano(x, z)
-		
-		r = self.f_dlogpxmc_dw(*orderedvals((w, z, x)))
+		A = self.get_A(x)
+		r = self.f_dlogpxmc_dw(*orderedvals((w, x, z))+[A])
 		return r[0], dict(zip(ndict.ordered(w).keys(), r[1:]))
 	
 	# Gradient w.r.t. the Fisher divergence
 	def dfd_dw(self, w, x, z, gz2):
 		x, z = self.xz_to_theano(x, z)
 		w, z, x, gz2 = ordereddicts((w, z, x, gz2))
-		r = self.f_dfd_dw(*(w.values() + z.values() + x.values() + gz2.values()))
+		A = self.get_A(x)
+		r = self.f_dfd_dw(*(w.values() + x.values() + z.values() + [A] + gz2.values()))
 		logpx, logpz, fd, gw = r[0], r[1], r[2], dict(zip(w.keys(), r[3:3+len(w)]))
 		
 		if ndict.hasNaN(gw):
@@ -236,12 +248,12 @@ class BNModel(object):
 		return logpx, logpz, fd, gw
 	
 	# Helper function that creates tiled version of datapoint 'x' (* n_batch)
-	def tiled_x(self, x):
+	def tiled_x(self, x, n_batch):
 		x_tiled = {}
 		for i in x:
 			if (x[i].shape[1] != 1):
-				raise Exception("{} {} {} ".format(x[i].shape[0], x[i].shape[1], self.n_batch))
-			x_tiled[i] = np.dot(x[i], np.ones((1, self.n_batch)))
+				raise Exception("{} {} {} ".format(x[i].shape[0], x[i].shape[1], n_batch))
+			x_tiled[i] = np.dot(x[i], np.ones((1, n_batch)))
 		return x_tiled
 	
 # converts normal dicts to ordered dicts, ordered by keys
@@ -256,20 +268,21 @@ def orderedvals(ds):
 # Monte Carlo FuncLikelihood
 class FuncLikelihoodMC():
 	
-	def __init__(self, x, model):
+	def __init__(self, x, model, n_batch):
 		self.x = x
 		self.model = model
+		self.n_batch = n_batch
 		n_train = x.itervalues().next().shape[1]
-		if n_train%(model.n_batch) != 0: raise BaseException()
-		self.blocksize = model.n_batch
+		if n_train%(self.n_batch) != 0: raise BaseException()
+		self.blocksize = self.n_batch
 		self.cardinality = n_train/self.blocksize
 	
 	def subval(self, i, w):
-		_x = ndict.getCols(self.x, i*self.model.n_batch, (i+1)*self.model.n_batch)
+		_x = ndict.getCols(self.x, i*self.n_batch, (i+1)*self.n_batch)
 		return self.model.logpxmc(w, _x)
 		
 	def subgrad(self, i, w):
-		_x = ndict.getCols(self.x, i*self.model.n_batch, (i+1)*self.model.n_batch)
+		_x = ndict.getCols(self.x, i*self.n_batch, (i+1)*self.n_batch)
 		logpx, gw = self.model.dlogpxmc_dw(w, _x)
 		return logpx, gw
 		
@@ -284,24 +297,25 @@ class FuncLikelihoodMC():
 # FuncLikelihood
 class FuncLikelihood():
 	
-	def __init__(self, x, model):
+	def __init__(self, x, model, n_batch):
 		self.x = x
 		self.model = model
+		self.n_batch = n_batch
 		n_train = x.itervalues().next().shape[1]
-		if n_train%(model.n_batch) != 0:
-			print n_train, model.n_batch
+		if n_train%(self.n_batch) != 0:
+			print n_train, self.n_batch
 			raise BaseException()
-		self.blocksize = model.n_batch
+		self.blocksize = self.n_batch
 		self.cardinality = n_train/self.blocksize
 	
 	def subval(self, i, w, z):
-		_x = ndict.getCols(self.x, i*self.model.n_batch, (i+1)*self.model.n_batch)
-		_z = ndict.getCols(z, i*self.model.n_batch, (i+1)*self.model.n_batch)
+		_x = ndict.getCols(self.x, i*self.n_batch, (i+1)*self.n_batch)
+		_z = ndict.getCols(z, i*self.n_batch, (i+1)*self.n_batch)
 		return self.model.logpxz(w, _z, _x)
 	
 	def subgrad(self, i, w, z):
-		_x = ndict.getCols(self.x, i*self.model.n_batch, (i+1)*self.model.n_batch)
-		_z = ndict.getCols(z, i*self.model.n_batch, (i+1)*self.model.n_batch)
+		_x = ndict.getCols(self.x, i*self.n_batch, (i+1)*self.n_batch)
+		_z = ndict.getCols(z, i*self.n_batch, (i+1)*self.n_batch)
 		logpx, logpz, g, _ = self.model.dlogpxz_dwz(w, _z, _x)
 		return logpx, logpz, g
 	
@@ -322,18 +336,19 @@ class FuncLikelihood():
 from IPython.parallel.util import interactive
 import IPython.parallel
 class FuncLikelihoodPar():
-	def __init__(self, x, model):
+	def __init__(self, x, model, n_batch):
 		raise Exception("TODO")
 		
 		self.x = x
 		self.c = c = IPython.parallel.Client()
 		self.model = model
+		self.n_batch = n_batch
 		self.clustersize = len(c)
 		
 		print 'ipcluster size = '+str(self.clustersize)
 		n_train = x.itervalues().next().shape[1]
-		if n_train%(model.n_batch*len(c)) != 0: raise BaseException()
-		self.blocksize = model.n_batch*len(c)
+		if n_train%(self.n_batch*len(c)) != 0: raise BaseException()
+		self.blocksize = self.n_batch*len(c)
 		self.cardinality = n_train/self.blocksize
 		
 		# Get pointers to slaves
@@ -348,7 +363,8 @@ class FuncLikelihoodPar():
 				'import sys; sys.path.append(\'../shared\')',
 				'import anglepy.ndict as ndict',
 				'import '+module,
-				'my_model='+module+'.'+function+'(**args)'
+				'my_n_batch = '+str(n_batch),
+				'my_model = '+module+'.'+function+'(**args)'
 		]
 		for cmd in commands: c[:].execute(cmd).get()
 		# Import data on slaves
@@ -360,9 +376,11 @@ class FuncLikelihoodPar():
 	def subval(self, i, w, z):
 		raise Exception("TODO")
 		
+		# Replaced my_model.nbatch with my_n_batch, this is UNTESTED
+		
 		@interactive
 		def ll(w, z, k):
-			_x = ndict.getCols(my_x, k*my_model.n_batch, (k+1)*my_model.n_batch) #@UndefinedVariable
+			_x = ndict.getCols(my_x, k*my_n_batch, (k+1)*my_n_batch) #@UndefinedVariable
 			if z == None:
 				return my_model.logpxmc(w, _x), None #@UndefinedVariable
 			else:
@@ -372,7 +390,7 @@ class FuncLikelihoodPar():
 		for j in range(len(self.c)):
 			_z = z
 			if _z != None:
-				_z = ndict.getCols(z, j*self.model.n_batch, (j+1)*self.model.n_batch)
+				_z = ndict.getCols(z, j*self.n_batch, (j+1)*self.n_batch)
 			tasks.append(self.c.load_balanced_view().apply_async(ll, w, _z, i))
 		
 		res = [task.get() for task in tasks]
@@ -384,7 +402,7 @@ class FuncLikelihoodPar():
 		
 		@interactive
 		def dlogpxz_dwz(w, z, k):
-			_x = ndict.getCols(my_x, k*my_model.n_batch, (k+1)*my_model.n_batch).copy() #@UndefinedVariable
+			_x = ndict.getCols(my_x, k*my_n_batch, (k+1)*my_n_batch).copy() #@UndefinedVariable
 			if z == None:
 				logpx, gw = my_model.dlogpxmc_dw(w, _x) #@UndefinedVariable
 				return logpx, None, gw, None
@@ -395,7 +413,7 @@ class FuncLikelihoodPar():
 		for j in range(len(self.c)):
 			_z = z
 			if _z != None:
-				_z = ndict.getCols(z, j*self.model.n_batch, (j+1)*self.model.n_batch)
+				_z = ndict.getCols(z, j*self.n_batch, (j+1)*self.n_batch)
 			tasks.append(self.c.load_balanced_view().apply_async(dlogpxz_dwz, w, _z, i))
 		
 		res = [task.get() for task in tasks]
@@ -438,9 +456,9 @@ class FuncLikelihoodPar():
 	
 	# Helper function
 	def getColsZX(self, w, z, i):
-		_x = ndict.getCols(self.x, i*self.model.n_batch, (i+1)*self.model.n_batch)
+		_x = ndict.getCols(self.x, i*self.n_batch, (i+1)*self.n_batch)
 		if z != None:
-			_z = ndict.getCols(z, i*self.model.n_batch, (i+1)*self.model.n_batch)
+			_z = ndict.getCols(z, i*self.n_batch, (i+1)*self.n_batch)
 		return _z, _x
 
 # FuncPosterior	

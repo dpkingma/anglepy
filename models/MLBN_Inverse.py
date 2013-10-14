@@ -7,22 +7,19 @@ import anglepy.logpdfs as theano_funcs
 import math, inspect
 import anglepy.ndict as ndict
 
-class Model(BNModel.BNModel):
-	def __init__(self, n_units, n_batch, prior_sd=1):
+class MLBN_Inverse(BNModel):
+	def __init__(self, n_units, prior_sd=1):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
 		self.n_units = n_units
-		self.n_batch = n_batch
 		self.prior_sd = prior_sd
 		self.logvar_factor = 1e-1
 		self.logvar_const = 0
 		self.logmeanb_factor = 1
-		super(Model, self).__init__(n_batch, 'ignore')
+		super(MLBN_Inverse, self).__init__('ignore')
 		
-	def factors(self, w, x, z):
+	def factors(self, w, x, z, A):
 		
 		# Define symbolic program
-		A = np.ones((1, self.n_batch))
-		
 		hidden = []
 		hidden.append(x['x'])
 		
@@ -52,11 +49,11 @@ class Model(BNModel.BNModel):
 		return logpw, logpx, logpz
 	
 	# Confabulate hidden states 'z'
-	def gen_xz(self, w, x, z):
-		A = np.ones((1, self.n_batch))
+	def gen_xz(self, w, x, z, n_batch):
+		A = np.ones((1, n_batch))
 		
 		if not x.has_key('x'):
-			x['x'] = np.random.binomial(1, 0.5, size=(self.n_units[0], self.n_batch))
+			x['x'] = np.random.binomial(1, 0.5, size=(self.n_units[0], n_batch))
 		
 		hidden = []
 		hidden.append(x['x'])

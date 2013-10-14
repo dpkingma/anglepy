@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+import scipy.optimize
 import anglepy.ndict as ndict
 import anglepy.BNModel as BNModel
 import hmc
@@ -14,8 +15,9 @@ def loop_mcem(dostep, w, model, hook, hook_wavelength=2, n_iters=9999999):
 	
 	def getLoglik():
 		if len(z[0]) < 4: return np.zeros(((0))), np.zeros(((0)))
-		_z, _logpxz = hmc.mcmc_combine_samples(z[0], logpxz[0], model.n_batch)
-		ll, ll_var = hmc.compute_mcmc_likelihood(_z, _logpxz, model.n_batch, len(z[0]))
+		
+		_z, _logpxz = hmc.mcmc_combine_samples(z[0], logpxz[0])
+		ll, ll_var = hmc.compute_mcmc_likelihood(_z, _logpxz, len(z[0]))
 		z[0] = []
 		logpxz[0] = []
 		return ll, ll_var
@@ -69,8 +71,7 @@ def lbfgs_wz(model, w, z, x, hook=None, maxiter=None):
 def step_batch_mcem(model_gen, x, z_mcmc, dostep_m, hmc_stepsize=1e-2, hmc_steps=20, m_steps=5):
 	print 'Batch MCEM', hmc_stepsize, hmc_steps, m_steps
 	
-	if model_gen.n_batch != x.itervalues().next().shape[1]:
-		raise Exception("{} != {}".format((model_gen.n_batch, x.itervalues().next().shape[1])))
+	n_batch = x.itervalues().next().shape[1]
 	
 	hmc_dostep = hmc.hmc_step_autotune(n_steps=hmc_steps, init_stepsize=hmc_stepsize)
 	
@@ -96,8 +97,7 @@ def step_batch_mcem(model_gen, x, z_mcmc, dostep_m, hmc_stepsize=1e-2, hmc_steps
 def step_hmc_wz(model, x, z, hmc_stepsize=1e-2, hmc_steps=20):
 	print 'step_hmc_wz', hmc_stepsize, hmc_steps
 
-	if model.n_batch != x.itervalues().next().shape[1]:
-		raise Exception("{} != {}".format((model.n_batch, x.itervalues().next().shape[1])))
+	n_batch = x.itervalues().next().shape[1]
 	
 	hmc_dostep_z = hmc.hmc_step_autotune(n_steps=hmc_steps, init_stepsize=hmc_stepsize)
 	hmc_dostep_w = hmc.hmc_step_autotune(n_steps=hmc_steps, init_stepsize=hmc_stepsize)
@@ -148,80 +148,9 @@ def loop_pvem(dostep, w, model, hook, hook_wavelength=2, n_iters=9999999):
 	
 	print 'Optimization loop finished'
 
-
-# PMCEM A (Predictive Monte Carlo EM)
-def step_pmcem_a(model_pred, model_gen, x, w_pred, hmc_steps=10, hmc_stepsize=1e-1, warmup=10, reg=1e-8):
-	print 'Predictive MCEM A', hmc_steps, hmc_stepsize, warmup, reg
-	
-	if model_pred.n_batch != model_gen.n_batch:
-		raise Exception("model_pred.n_batch != model_gen.n_batch")
-	
-	hmc_dostep = hmc.hmc_step_autotune(n_steps=hmc_steps, init_stepsize=hmc_stepsize)
-
-	# We're using adagrad stepsizes
-	gw_pred_ss = ndict.cloneZeros(w_pred)
-	gw_gen_ss = ndict.cloneZeros(model_gen.init_w())
-	
-	nsteps = [0]
-	
-	do_adagrad = True
-	stepsize_ada = 1e-3
-	stepsize_sgd = 1e-4
-	
-	def doStep(w_gen):
-		
-		#def fgrad(_z):
-		#	logpx, logpz, gw, gz = model_gen.dlogpxz_dwz(w, _z, x)
-		#	return logpx + logpz, gz
-		n_tot = x.itervalues().next().shape[1]
-		n_batch = model_gen.n_batch
-		idx_minibatch = np.random.randint(0, x.itervalues().next().shape[1], model_pred.n_batch)
-		x_minibatch = {i:x[i][:,idx_minibatch] for i in x}
-		if True: x_minibatch = {i:x[i][:,0:n_batch] for i in x}
-		
-		# step 1A: sample z ~ p(z|x) from model_pred
-		_, z, _  = model_pred.gen_xz(w_pred, x_minibatch, {})
-		
-		# step 1B: update z using HMC
-		def fgrad(_z):
-			logpx, logpz, gw, gz = model_gen.dlogpxz_dwz(w_gen, _z, x_minibatch)
-			return logpx + logpz, gz
-		logpxz, _, _ = hmc_dostep(fgrad, z)
-
-		def optimize(w, gw, gw_ss):
-			if do_adagrad:
-				for i in gw:
-					gw_ss[i] += gw[i]**2
-					if nsteps[0] > warmup:
-						w[i] += stepsize_ada / np.sqrt(gw_ss[i]+reg) * gw[i]
-			else:
-				for i in gw:
-					w[i] += stepsize_sgd * gw[i]
-
-		# step 2: use z to update model_gen
-		logpx, logpz, gw_gen, gz_gen = model_gen.dlogpxz_dwz(w_gen, z, x_minibatch)
-		_, gw_prior = model_gen.dlogpw_dw(w_gen)
-		gw = {i: gw_gen[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw_gen}
-		optimize(w_gen, gw, gw_gen_ss)
-		
-		# step 3A: use z to update model_pred
-		_, _, gw_pred, _ = model_pred.dlogpxz_dwz(w_pred, z, x_minibatch)
-		_, gw_prior = model_pred.dlogpw_dw(w_pred)
-		gw = {i: -gw_pred[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw_pred}
-		optimize(w_pred, gw, gw_pred_ss)
-		
-		nsteps[0] += 1
-		
-		return z.copy(), (logpx+logpz).copy() 
-		
-	return doStep
-
 # PVEM B (Predictive Variational EM)
-def step_pvem(model_pred, model_gen, x, w_pred, ada_stepsize=1e-1, warmup=10, reg=1e-8, convertImgs=False):
+def step_pvem(model_pred, model_gen, x, w_pred, n_batch=100, ada_stepsize=1e-1, warmup=10, reg=1e-8, convertImgs=False):
 	print 'Predictive VEM', ada_stepsize
-	
-	if model_pred.n_batch != model_gen.n_batch:
-		raise Exception("model_pred.n_batch != model_gen.n_batch")
 	
 	hmc_steps=0
 	hmc_dostep = hmc.hmc_step_autotune(n_steps=hmc_steps, init_stepsize=1e-1)
@@ -240,13 +169,12 @@ def step_pvem(model_pred, model_gen, x, w_pred, ada_stepsize=1e-1, warmup=10, re
 		#	logpx, logpz, gw, gz = model_gen.dlogpxz_dwz(w, _z, x)
 		#	return logpx + logpz, gz
 		n_tot = x.itervalues().next().shape[1]
-		n_batch = model_gen.n_batch
-		idx_minibatch = np.random.randint(0, n_tot, model_pred.n_batch)
+		idx_minibatch = np.random.randint(0, n_tot, n_batch)
 		x_minibatch = {i:x[i][:,idx_minibatch] for i in x}
 		if convertImgs: x_minibatch = {i:x_minibatch[i]/256. for i in x_minibatch}
 			
 		# step 1A: sample z ~ p(z|x) from model_pred
-		_, z, _  = model_pred.gen_xz(w_pred, x_minibatch, {})
+		_, z, _  = model_pred.gen_xz(w_pred, x_minibatch, {}, n_batch)
 		
 		# step 1B: update z using HMC
 		def fgrad(_z):

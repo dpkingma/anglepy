@@ -7,7 +7,9 @@ import anglepy.logpdfs as logpdfs
 import math, inspect
 from theano.tensor.shared_randomstreams import RandomStreams
 
-def create(n_z, n_x, n_steps, n_batch, prior_sd=0.1):
+def create(n_z, n_x, n_steps, prior_sd=0.1):
+	raise Exception("NEEDS REFACTORING")
+
 	constr = (__name__, inspect.stack()[0][3], locals())
 	
 	A = np.ones((1, n_batch))
@@ -41,7 +43,7 @@ def create(n_z, n_x, n_steps, n_batch, prior_sd=0.1):
 		return logpw, logpx, logpz
 	
 	# Confabulate latent variables 'x' and 'z'
-	def gen_xz(w, x, z):
+	def gen_xz(w, x, z, n_batch):
 		sd = np.dot(np.exp(w['logsd']), A)
 		for i in range(n_steps):
 			if not z.has_key('z'+str(i)):

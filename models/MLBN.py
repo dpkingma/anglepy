@@ -6,21 +6,18 @@ import anglepy as ap
 
 import math, inspect
 
-class Model(ap.BNModel):
+class MLBN(ap.BNModel):
 	
-	def __init__(self, n_hidden, n_output, n_batch, prior_sd=1, noMiddleEps=False):
+	def __init__(self, n_hidden, n_output, prior_sd=1, noMiddleEps=False):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
 		self.n_hidden = n_hidden
 		self.n_output = n_output
-		self.n_batch = n_batch
 		self.prior_sd = prior_sd
 		self.noMiddleEps = noMiddleEps
-		super(Model, self).__init__(n_batch)
+		super(MLBN, self).__init__()
 	
-	def factors(self, w, x, z):
+	def factors(self, w, x, z, A):
 		
-		A = np.ones((1, self.n_batch))
-	
 		# Define symbolic program
 		hidden = []
 		hidden.append(z['eps0'])
@@ -55,11 +52,12 @@ class Model(ap.BNModel):
 		return logpw, logpx, logpz
 	
 	# Confabulate latent variables
-	def gen_xz(self, w, x, z):
-		A = np.ones((1, self.n_batch))
+	def gen_xz(self, w, x, z, n_batch):
+		
+		A = np.ones((1, n_batch))
 		
 		if not z.has_key('eps0'):
-			z['eps0'] = np.random.standard_normal(size=(self.n_hidden[0], self.n_batch))
+			z['eps0'] = np.random.standard_normal(size=(self.n_hidden[0], n_batch))
 										
 		_z = {'z0': z['eps0']}
 		
@@ -69,7 +67,7 @@ class Model(ap.BNModel):
 			
 			if (not self.noMiddleEps):
 				if not z.has_key('eps'+str(i)):
-					z['eps'+str(i)] = np.random.standard_normal(size=(self.n_hidden[i], self.n_batch))
+					z['eps'+str(i)] = np.random.standard_normal(size=(self.n_hidden[i], n_batch))
 				sd = np.dot(np.absolute(w['logsd'+str(i)]), A)
 				_z['z'+str(i)] += z['eps'+str(i)] * sd
 		

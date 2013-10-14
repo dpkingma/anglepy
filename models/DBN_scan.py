@@ -14,17 +14,17 @@ import sys
 	=> return rval
 '''
 
-class DBN_scan(BNModel.BNModel):
+class DBN_scan(BNModel):
 	
-	def __init__(self, n_z, n_x, n_steps, n_batch, prior_sd=0.1):
+	def __init__(self, n_z, n_x, n_steps, prior_sd=0.1):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
-		self.n_z, self.n_x, self.n_steps, self.n_batch = n_z, n_x, n_steps, n_batch
+		self.n_z, self.n_x, self.n_steps = n_z, n_x, n_steps
 		self.prior_sd = prior_sd
 		
 		theano_warning = 'raise'
 		if n_steps == 1: theano_warning = 'warn'
 		
-		super(DBN_scan, self).__init__(n_batch, theano_warning)
+		super(DBN_scan, self).__init__(theano_warning)
 
 	def variables(self):
 		# Define parameters 'w'
@@ -38,14 +38,16 @@ class DBN_scan(BNModel.BNModel):
 		
 		return w, x, z
 	
-	def factors(self, w, x, z):
+	def factors(self, w, x, z, A):
 		
 		def pr(str, _x):
 			return theano.printing.Print(str)(_x)
 		
 		#A = T.ones_like(x['x'][0,0:1]) #np.ones((1, self.n_batch))
-		A = np.ones((1, self.n_batch))
-		A = T.unbroadcast(T.constant(A), 0) 
+		
+		# Removed in refactoring
+		#A = np.ones((1, self.n_batch))
+		#A = T.unbroadcast(T.constant(A), 0) 
 		
 		# Init sequences
 		
@@ -95,15 +97,15 @@ class DBN_scan(BNModel.BNModel):
 		return gw, _gz
 
 	# Confabulate hidden states 'z'
-	def gen_xz(self, w, x, z):
-		A = np.ones((1, self.n_batch))
+	def gen_xz(self, w, x, z, n_batch):
+		A = np.ones((1, n_batch))
 		
 		# Factors of X
 		_z = {}
 		sd = np.dot(np.exp(w['logsd']), A)
 		for i in range(self.n_steps):
 			if not z.has_key('eps'+str(i)):
-				z['eps'+str(i)] = np.random.standard_normal(size=(self.n_z, self.n_batch))
+				z['eps'+str(i)] = np.random.standard_normal(size=(self.n_z, n_batch))
 			
 			if i == 0:
 				_z['z'+str(i)] = z['eps'+str(i)]

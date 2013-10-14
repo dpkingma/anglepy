@@ -8,6 +8,8 @@ import math, inspect
 
 # Fast MLBN
 def create(n_hidden, n_output, n_batch, prior_sd=0.1, noMiddleEps=False):
+	raise Exception("Needs refactoring!")
+
 	constr = (__name__, inspect.stack()[0][3], locals())
 	
 	def functions(w, z, x):

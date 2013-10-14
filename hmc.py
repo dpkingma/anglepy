@@ -14,7 +14,7 @@ def hmc_step(fgrad, x0, _stepsize=1e-2, n_steps=20):
 	n_batch = x0.itervalues().next().shape[1]
 	stepsize = (np.random.uniform(size=(1, n_batch)) < 0.5).astype(float)*2-1
 	stepsize *= _stepsize
-		
+	
 	if np.random.uniform() < 0.5:
 		stepsize *= -1
 	
@@ -94,8 +94,11 @@ def hmc_step_autotune(n_steps=20, init_stepsize=1e-2, target=0.9):
 	return dostep
 
 # Merge lists of z's and corresponding logpxz's into single matrices
-def mcmc_combine_samples(z_list, logpxz_list, n_batch):
+def mcmc_combine_samples(z_list, logpxz_list):
 	n_list = len(logpxz_list)
+	
+	n_batch = logpxz_list[0].shape[1]
+	
 	# Stack logpxz values into one matrix
 	for i in range(n_list):
 		logpxz_list[i] = logpxz_list[i].reshape((n_batch, 1))
@@ -114,10 +117,12 @@ def mcmc_combine_samples(z_list, logpxz_list, n_batch):
 # Compute the MCMC likelihood 
 # z = MCMC samples 'z'
 # logpxz = logp(x,z) corresponding to 'z'
-# Unbiased: sample set of split for estimation of 'q' and 'p'
-def compute_mcmc_likelihood(z, logpxz, n_batch, n_samples):
+def compute_mcmc_likelihood(z, logpxz, n_samples):
 	
 	if n_samples < 4: raise Exception("n_samples < 4")
+	
+	# logpxz has 1 row and (n_samples*n_batch) columns
+	n_batch = logpxz.shape[1]/n_samples
 	
 	C = np.ones((n_samples,1))
 	
@@ -220,9 +225,12 @@ def logpdf_mult_normal(x, mean, cov):
 # Alternative computation
 # by assuming a log-normal distribution
 # (sometimes gives better result)
-def compute_mcmc_likelihood_lognormal(z, logpxz, n_batch, n_samples):
+def compute_mcmc_likelihood_lognormal(z, logpxz, n_samples):
 	
 	C = np.ones((n_samples,1))
+	
+	# logpxz has 1 row and (n_samples*n_batch) columns
+	n_batch = logpxz.shape[1]/n_samples
 	
 	logq = 0
 	for i in z:
@@ -248,11 +256,8 @@ def compute_mcmc_likelihood_lognormal(z, logpxz, n_batch, n_samples):
 def ll_estimator(model, _w, x, n_burnin=5, n_leaps=100, n_steps=10, stepsize=1e-3):
 	#print 'MCMC Likelihood', stepsize, n_steps, n_leaps
 	
-	_, z_mcmc, _ = model.gen_xz(_w, x, {})
-	
-	n_batch_data = x.itervalues().next().shape[1]
-	if model.n_batch != n_batch_data:
-		raise Exception("{} != {}".format((model.n_batch, n_batch_data)))
+	n_batch = x.itervalues().next().shape[1]
+	_, z_mcmc, _ = model.gen_xz(_w, x, {}, n_batch)
 	
 	hmc_dostep = hmc_step_autotune(n_steps=n_steps, init_stepsize=stepsize)
 	
@@ -275,8 +280,8 @@ def ll_estimator(model, _w, x, n_burnin=5, n_leaps=100, n_steps=10, stepsize=1e-
 			z_list.append(z_mcmc.copy())
 			logpxz_list.append(logpxz.copy())
 			
-		_z, _logpxz = mcmc_combine_samples(z_list, logpxz_list, model.n_batch)
-		ll, var = compute_mcmc_likelihood(_z, _logpxz, model.n_batch, len(z_list))
+		_z, _logpxz = mcmc_combine_samples(z_list, logpxz_list)
+		ll, var = compute_mcmc_likelihood(_z, _logpxz, len(z_list))
 		
 		return ll, var
 		
@@ -297,11 +302,11 @@ def test_variance_estimate():
 	n_dims=64
 	n_leaps=500
 	
-	model = DBN.create(n_z=n_dims, n_x=n_dims, n_steps=n_steps_dbn, n_batch=1, prior_sd=1)
+	model = DBN.create(n_z=n_dims, n_x=n_dims, n_steps=n_steps_dbn, prior_sd=1)
 	w_true = model.init_w(1)
 	
 	xkeys = ['x'+str(i) for i in range(n_steps_dbn)]
-	x, _, _ = model.gen_xz(w_true, {}, {})
+	x, _, _ = model.gen_xz(w_true, {}, {}, 1)
 	
 	for i in range(100):
 		w = model.init_w(1)
@@ -325,10 +330,10 @@ def test_variance_estimate2():
 	n_steps_dbn=1
 	n_dims=64
 	
-	model = DBN.create(n_z=n_dims, n_x=n_dims, n_steps=n_steps_dbn, n_batch=1, prior_sd=1)
+	model = DBN.create(n_z=n_dims, n_x=n_dims, n_steps=n_steps_dbn, prior_sd=1)
 	w_true = model.init_w(1)
 	
-	x, _, _ = model.gen_xz(w_true, {}, {})
+	x, _, _ = model.gen_xz(w_true, {}, {}, 1)
 	
 	w = model.init_w(1)
 	for j in range(4,100):
@@ -363,4 +368,3 @@ def ess(x):
 		if x[i] < 0.05: break
 		sum += x[i]
 	return len(x)/(1+2*sum)
-
