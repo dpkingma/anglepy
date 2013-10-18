@@ -49,7 +49,7 @@ class MLBN(ap.BNModel):
 			logpw += f_prior(w['w%i'%i])
 		logpw += f_prior(w['wout'])
 		
-		return logpw, logpx, logpz
+		return logpw, logpx, logpz, {}
 	
 	# Confabulate latent variables
 	def gen_xz(self, w, x, z, n_batch):

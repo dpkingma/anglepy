@@ -29,6 +29,7 @@ class BNModel(object):
 	def __init__(self, theano_warning='raise', hessian=True):
 		
 		theanofunction = lazytheanofunc('warn', mode='FAST_RUN')
+		theanofunction_silent = lazytheanofunc('ignore', mode='FAST_RUN')
 		
 		# Create theano expressions
 		# TODO: change order to (w, x, z) everywhere
@@ -41,6 +42,7 @@ class BNModel(object):
 		# Get gradient symbols
 		allvars = w.values()  + x.values() + z.values() + [A] # note: '+' concatenates lists
 		
+		# TODO: Split Hessian code from the core code (it's too rarely used), e.g. just in experiment script.
 		if False and hessian:
 			# Hessian of logpxz wrt z
 			raise Exception("Needs fix: assumes fixed n_batch, which is not true anymore")
@@ -73,7 +75,7 @@ class BNModel(object):
 			for i in _x: x[i].tag.test_value = _x[i]
 			for i in _z: z[i].tag.test_value = _z[i]
 		
-		logpw, logpx, logpz = self.factors(w, x, z, A)
+		logpw, logpx, logpz, dists = self.factors(w, x, z, A)
 		
 		# Complete-data likelihood estimate
 		logpxz = logpx.sum() + logpz.sum()
@@ -91,6 +93,12 @@ class BNModel(object):
 		self.f_logpw = theanofunction(w.values(), logpw)
 		self.f_dlogpw_dw = theanofunction(w.values(), [logpw] + dlogpw_dw)
 		
+		# distributions
+		self.f_dists = {}
+		for name in dists:
+			_vars, dist = dists[name]
+			self.f_dists[name] = theanofunction_silent(_vars, dist)
+		
 		if False:
 			raise Exception("Code block needs refactoring: n_batch no longer a field of the model")
 			# MC-LIKELIHOOD
@@ -100,7 +108,7 @@ class BNModel(object):
 			dlogpxmc_dw = T.grad(logpxmc, w.values(), disconnected_inputs=theano_warning)
 			self.f_dlogpxmc_dw = theanofunction(allvars, [logpxmc] + dlogpxmc_dw)
 		
-		if True:
+		if True and len(z) > 0:
 			# Fisher divergence (FD)
 			gz = T.grad(logpxz, z.values())
 			gz2 = [T.dmatrix() for _ in gz]
@@ -123,6 +131,14 @@ class BNModel(object):
 	def gen_xz(self): raise NotImplementedError()
 	def init_w(self): raise NotImplementedError()
 	
+	# Prediction
+	def distribution(self, w, x, z, name):
+		x, z = self.xz_to_theano(x, z)
+		w, z, x = ordereddicts((w, z, x))
+		A = self.get_A(x)
+		allvars = w.values() + x.values() + z.values() + [A]
+		return self.f_dists[name](*allvars)
+	
 	# Numpy <-> Theano var conversion
 	def xz_to_theano(self, x, z): return x, z
 	def gwgz_to_numpy(self, gw, gz): return gw, gz
@@ -133,8 +149,9 @@ class BNModel(object):
 	# Likelihood: logp(x,z|w)
 	def logpxz(self, w, z, x):
 		_x, _z = self.xz_to_theano(x, z)
-		A = self.get_A(x)
-		logpx, logpz = self.f_logpxz(*orderedvals((w, _x, _z))+[A])
+		A = self.get_A(_x)
+		allvars = w.values() + _x.values() + _z.values() + [A]
+		logpx, logpz = self.f_logpxz(*allvars)
 		if np.isnan(logpx).any() or np.isnan(logpz).any():
 			print 'v: ', logpx, logpz
 			print 'Values:'
@@ -149,7 +166,8 @@ class BNModel(object):
 		x, z = self.xz_to_theano(x, z)
 		w, z, x = ordereddicts((w, z, x))
 		A = self.get_A(x)
-		r = self.f_dlogpxz_dwz(*(w.values() + x.values() + z.values() + [A]))
+		allvars = w.values() + x.values() + z.values() + [A]
+		r = self.f_dlogpxz_dwz(*allvars)
 		logpx, logpz, gw, gz = r[0], r[1], dict(zip(w.keys(), r[2:2+len(w)])), dict(zip(z.keys(), r[2+len(w):]))
 		
 		if ndict.hasNaN(gw) or ndict.hasNaN(gz):
@@ -325,8 +343,8 @@ class FuncLikelihood():
 		return np.hstack(logpx), np.hstack(logpz)
 	
 	def grad(self, w, z):
-		if self.cardinality==1: return self.grad(0, w, z)
-		logpxi, logpzi, gwi, _ = tuple(zip(*[self.grad(i, w, z) for i in range(self.cardinality)]))
+		if self.cardinality==1: return self.subgrad(0, w, z)
+		logpxi, logpzi, gwi, _ = tuple(zip(*[self.subgrad(i, w, z) for i in range(self.cardinality)]))
 		return np.hstack(logpxi), np.hstack(logpzi), ndict.sum(gwi)
 	
 # Parallel version of likelihood
@@ -482,11 +500,11 @@ class FuncPosterior():
 		for j in gw: gw[j] += prior_weight * gw_prior[j]
 		return logpx.sum() + logpz.sum() + prior_weight * prior, gw
 	
-	def val(self, w, z=None):
+	def val(self, w, z={}):
 		logpx, logpz = self.ll.val(w, z)
 		return logpx.sum() + logpz.sum() + self.model.logpw(w)
 	
-	def grad(self, w, z=None):
+	def grad(self, w, z={}):
 		logpx, logpz, gw = self.ll.grad(w, z)
 		prior, gw_prior = self.model.dlogpw_dw(w)
 		for i in gw: gw[i] += gw_prior[i]

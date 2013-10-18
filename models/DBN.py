@@ -9,15 +9,15 @@ from theano.tensor.shared_randomstreams import RandomStreams
 
 class DBN(BNModel):
 	
-	def __init__(self, n_z, n_x, n_steps, n_batch, prior_sd=0.1):
+	def __init__(self, n_z, n_x, n_steps, prior_sd=0.1):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
-		self.n_z, self.n_x, self.n_steps, self.n_batch = n_z, n_x, n_steps, n_batch
+		self.n_z, self.n_x, self.n_steps, self.n_batch = n_z, n_x, n_steps
 		self.prior_sd = prior_sd
 		
 		theano_warning = 'raise'
 		if n_steps == 1: theano_warning = 'warn'
 		
-		super(DBN, self).__init__(n_batch, theano_warning)
+		super(DBN, self).__init__(theano_warning)
 	
 	
 	def factors(self, w, x, z, A):
@@ -53,7 +53,7 @@ class DBN(BNModel):
 		for i in w:
 			logpw += anglepy.logpdfs.normal(w[i], 0, self.prior_sd).sum() # logp(w)
 		
-		return logpw, logpx, logpz
+		return logpw, logpx, logpz, {}
 
 	# Confabulate hidden states 'z'
 	def gen_xz(self, w, x, z):

@@ -103,12 +103,12 @@ def lbfgs(posterior, w, hook=None, hook_wavelength=2, m=100, maxiter=15000):
 		# maybe just execute a remote np.random.seed(0) there?
 		np.random.seed(0)
 		_w = ndict.unflatten(y, w)
-		logLik, gw = cache[1], cache[2]
+		logpw, gw = cache[1], cache[2]
 		if np.linalg.norm(y) != cache[0]:
-			logLik, gw = posterior.grad(_w)
-			print logLik, np.linalg.norm(y)
-			cache[0], cache[1], cache[2] = [np.linalg.norm(y), logLik, gw]
-		return logLik, gw
+			logpw, gw = posterior.grad(_w)
+			#print logpw, np.linalg.norm(y)
+			cache[0], cache[1], cache[2] = [np.linalg.norm(y), logpw, gw]
+		return logpw, gw
 	
 	def f(y):
 		logLik, gw = eval(y)
@@ -129,12 +129,8 @@ def lbfgs(posterior, w, hook=None, hook_wavelength=2, m=100, maxiter=15000):
 		t[1] += 1
 		if time.time() - t[2] > hook_wavelength:
 			_w = ndict.unflatten(wz, w)
-			hook(t[1], _w)
+			hook(t[1], _w, cache[1]) # num_its, w, logpw
 			t[2] = time.time()
-		#t[0] += 1
-		#if t[0]%5 is not 0: return
-		#if time.time() - t[2] < 1: return
-		#t[2] = time.time()
 	
 	x0 = ndict.flatten(w)
 	xn, f, d = scipy.optimize.fmin_l_bfgs_b(func=f, x0=x0, fprime=fprime, m=m, iprint=0, callback=callback, maxiter=maxiter)
@@ -142,10 +138,11 @@ def lbfgs(posterior, w, hook=None, hook_wavelength=2, m=100, maxiter=15000):
 	#scipy.optimize.fmin_cg(f=f, x0=x0, fprime=fprime, full_output=True, callback=hook)
 	#scipy.optimize.fmin_ncg(f=f, x0=x0, fprime=fprime, full_output=True, callback=hook)
 	w = ndict.unflatten(xn, w)
-	print 'd: ', d
+	#print 'd: ', d
 	if d['warnflag'] is 2:
 		print 'warnflag:', d['warnflag']
 		print d['task']
-	return w
+	info = d
+	return w, info
 	
 	

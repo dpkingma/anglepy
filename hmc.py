@@ -169,6 +169,9 @@ def compute_mcmc_likelihood(z, logpxz, n_samples):
 		logpdf = np.vstack(logpdf)
 		return logpdf.reshape((-1, n_batch*n_est))
 	
+	# TODO: implement Infinite Gaussian Mixture Model from scikit learn
+	# http://scikit-learn.org/stable/modules/generated/sklearn.mixture.DPGMM.html#sklearn.mixture.DPGMM
+	
 	logq = 0
 	for i in z:
 		_z = z[i].reshape((-1, n_samples))

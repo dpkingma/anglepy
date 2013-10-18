@@ -46,7 +46,7 @@ class MLBN_Inverse(BNModel):
 		logpw += f_prior(w['w_mean'])
 		logpw += f_prior(w['w_logvar'])
 		
-		return logpw, logpx, logpz
+		return logpw, logpx, logpz, {}
 	
 	# Confabulate hidden states 'z'
 	def gen_xz(self, w, x, z, n_batch):
