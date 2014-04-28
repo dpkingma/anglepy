@@ -2,12 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import anglepy.ndict as ndict
 import scipy.stats
-import time
+import scipy.linalg
+import time, sys
+import random
 
 log = {'acceptRate': [1],}
 
 # Hybrid Monte Carlo sampler
-# HMV move where x is a batch (rows=variables, columns=samples)
+# HMC move where x is a batch (rows=variables, columns=samples)
+# NOTE: _stepsize can be a scalar OR a column vector with individual stepsizes
 def hmc_step(fgrad, x0, _stepsize=1e-2, n_steps=20):
 	
 	# === INITIALIZE
@@ -38,6 +41,7 @@ def hmc_step(fgrad, x0, _stepsize=1e-2, n_steps=20):
 	
 	# Perform leapfrog steps
 	for step in xrange(n_steps):
+		#print 'hmc_step:', step
 		logpxz, g = fgrad(xnew)
 		for i in xnew:
 			vnew[i] += stepsize * g[i]
@@ -77,24 +81,44 @@ def hmc_step(fgrad, x0, _stepsize=1e-2, n_steps=20):
 	
 	return logpxz, accept
 
+# Auto-tuning HMC step with global stepsize
 def hmc_step_autotune(n_steps=20, init_stepsize=1e-2, target=0.9):
-	alpha = 1.02
+	alpha = 1.02 #1.02
+	max_factor = 1.25
 	stepsize = [init_stepsize]
 	steps = [0]
 	def dostep(fgrad, x):
 		logpxz, accept = hmc_step(fgrad, x, stepsize[0], n_steps)
-		acceptrate = accept.mean()
-		if acceptrate < target:
-			stepsize[0] /= alpha**float(accept.size)
+		factor = min(max_factor, alpha**float(min(100, accept.size)))
+		if accept.mean() < target:
+			stepsize[0] /= factor
 		else:
-			stepsize[0] *= alpha**float(accept.size)
+			stepsize[0] *= factor
 		steps[0] += 1
-		#print steps[0], 'stepsize:', acceptrate, stepsize[0], accept.size
-		return logpxz, acceptrate, stepsize[0]
+		#print steps[0], 'stepsize:', accept.mean(), stepsize[0], accept.size
+		return logpxz, accept.mean(), stepsize[0]
+	return dostep
+
+# Auto-tuning with individual stepsizes
+def hmc_step_autotune_indiv(n_steps=20, init_stepsize=1e-2, target=0.9):
+	alpha = 1.02 #1.02
+	stepsize = [None]
+	init = [False]
+	steps = [0]
+	def dostep(fgrad, x):
+		if init[0] == False:
+			n_batch = x.itervalues().next().shape[1]
+			stepsize[0] = init_stepsize*np.ones((1, n_batch))
+			init[0] = True
+		logpxz, accept = hmc_step(fgrad, x, stepsize[0], n_steps)		
+		stepsize[0] *= np.exp((alpha * (accept*2-1)))
+		steps[0] += 1
+		#print steps[0], 'stepsize:', accept.mean(), stepsize[0], accept.size
+		return logpxz, accept.mean(), stepsize[0]
 	return dostep
 
 # Merge lists of z's and corresponding logpxz's into single matrices
-def mcmc_combine_samples(z_list, logpxz_list):
+def combine_samples(z_list, logpxz_list):
 	n_list = len(logpxz_list)
 	
 	n_batch = logpxz_list[0].shape[1]
@@ -114,15 +138,59 @@ def mcmc_combine_samples(z_list, logpxz_list):
 	
 	return z, logpxz
 
+# Convenience function: run HMC automatically
+def sample_standard_auto(z, fgrad, n_burnin, n_samples):
+	hmc_dostep = hmc_step_autotune(n_steps=10, init_stepsize=1e-2, target=0.9)
+	def dostep(_z):
+		logpxz, _, _ = hmc_dostep(fgrad, _z)
+		return logpxz
+	
+	# Burn-in phase
+	for i in range(n_burnin):
+		dostep(z)
+	
+	# Sample
+	z_list = []
+	logpxz_list = []
+	for _ in range(n_samples):
+		logpxz = dostep(z)
+		#print 'logpxz:', logpxz
+		logpxz_list.append(logpxz.copy())
+		z_list.append(ndict.clone(z))
+	
+	z, logpxz = combine_samples(z_list, logpxz_list)
+	
+	return z, logpxz
+
+# Kernel density estimator, with inferred factor
+# Ttunes 'factor' hyperparameter based on validation performance.
+# (Used by estimate_mcmc_likelihood())
+def kde_infer_factor(_z):
+	n_data = _z.shape[1]
+	# Find good kde.factor on train/validation split of training set
+	scotts_factor = n_data**(-1./(_z.shape[0]+4))
+	factors = [scotts_factor * np.e**((i-5)/2.) for i in range(10)]
+	scores = [np.log(scipy.stats.gaussian_kde(_z[:,n_data/2:], bw_method=factor).evaluate(_z[:,:n_data/2])).sum() for factor in factors]
+	bestfactor = factors[np.argmax(np.asarray(scores))]
+	# print np.argmax(np.asarray(scores)), bestfactor
+	# Use kdefactor on whole training set
+	return scipy.stats.gaussian_kde(_z, bw_method=bestfactor)
+
 # Compute the MCMC likelihood 
-# z = MCMC samples 'z'
-# logpxz = logp(x,z) corresponding to 'z'
-def compute_mcmc_likelihood(z, logpxz, n_samples):
+# ndict: z = MCMC samples 'z'
+# logpxz = logp(x,z) corresponding to 'z' (same nr. of columns)
+def estimate_mcmc_likelihood(z, logpxz, n_samples, method='kde2'):
 	
 	if n_samples < 4: raise Exception("n_samples < 4")
 	
 	# logpxz has 1 row and (n_samples*n_batch) columns
 	n_batch = logpxz.shape[1]/n_samples
+	
+	# Don't shuffle 'z' and 'logpxz', since this method assumes that all samples are independent
+	# Samples are typically from MCMC chain, which have some dependencies if samples are 'close' in chain
+	# Estimate will be biased when samples are dependent,
+	# but not very much if at least the first half (for estimating 'q')
+	# and the second half are approximately independent.
 	
 	C = np.ones((n_samples,1))
 	
@@ -151,26 +219,29 @@ def compute_mcmc_likelihood(z, logpxz, n_samples):
 			rows = range(n_z*batch,n_z*(batch+1))
 			_mean = _z[rows,:n_approx].mean(axis=1, keepdims=True)
 			_cov = np.cov(_z[rows,:n_approx])
-			_logpdf = logpdf_mult_normal(_z[rows,n_approx:], _mean, _cov)
+			if np.linalg.cond(_cov) < 1/sys.float_info.epsilon:
+				_logpdf = logpdf_mult_normal(_z[rows,n_approx:], _mean, _cov)
+			else:
+				_logpdf = logpdf[-1].T
 			logpdf.append(_logpdf.T)
 		logpdf = np.vstack(logpdf)
 		return logpdf.reshape((-1, n_batch*n_est))
 
 	# PDF estimate with KDE (kernel density estimator)
-	def compute_logq_kde(_z):
+	def compute_logq_kde(_z, infer_factor=True):
 		n_z = _z.shape[0]/n_batch
 		logpdf = []
 		for batch in range(n_batch):
 			rows = range(n_z*batch,n_z*(batch+1))
 			#print(_z[rows,:n_approx])
-			kde = scipy.stats.gaussian_kde(_z[rows,:n_approx])
+			if infer_factor:
+				kde = kde_infer_factor(_z[rows,:n_approx])
+			else:
+				kde = scipy.stats.gaussian_kde(_z[rows,:n_approx])
 			_logpdf = np.log(kde.evaluate(_z[rows,n_approx:]).reshape((1,-1)))
 			logpdf.append(_logpdf.T)
 		logpdf = np.vstack(logpdf)
 		return logpdf.reshape((-1, n_batch*n_est))
-	
-	# TODO: implement Infinite Gaussian Mixture Model from scikit learn
-	# http://scikit-learn.org/stable/modules/generated/sklearn.mixture.DPGMM.html#sklearn.mixture.DPGMM
 	
 	logq = 0
 	for i in z:
@@ -178,17 +249,16 @@ def compute_mcmc_likelihood(z, logpxz, n_samples):
 		if z[i].shape[0] == 1 or n_approx/z[i].shape[0] < 4:
 			_logq = compute_logq_var(_z)
 		else:
-			if True:
-				_logq = compute_logq_kde(_z)
-			else:
-				_logq = compute_logq_cov(_z)
+			if method is 'kde': _logq = compute_logq_kde(_z)
+			elif method is 'kde2': _logq = compute_logq_kde(_z, infer_factor=True)
+			elif method is 'cov': _logq = compute_logq_cov(_z)
+			else: raise Exception("Unknown method: "+method)
 		logq += _logq
 	
 	logpi = (logq - logpxz[:,n_approx*n_batch:]).reshape((n_batch, n_est))
 	
 	# This prevent some numerical issues
 	logpi_max = logpi.max(axis=1, keepdims=True) #*0
-	
 	logpi_var = logpi.var(axis=1, keepdims=True)
 	
 	logpx = - (np.log(np.exp(logpi-logpi_max).mean(axis=1, keepdims=True)) + logpi_max).T
@@ -207,6 +277,11 @@ def compute_mcmc_likelihood(z, logpxz, n_samples):
 	
 	#logpx_var = (2 * logpi_var/n_est).T
 	
+	'''
+	Variance of reciprocal:
+	http://stats.stackexchange.com/questions/19576/variance-of-the-reciprocal-ii
+	
+	'''
 	if np.isnan(logpx).sum() > 0:
 		raise Exception("NaN detected")
 	
@@ -228,7 +303,7 @@ def logpdf_mult_normal(x, mean, cov):
 # Alternative computation
 # by assuming a log-normal distribution
 # (sometimes gives better result)
-def compute_mcmc_likelihood_lognormal(z, logpxz, n_samples):
+def estimate_mcmc_likelihood_lognormal(z, logpxz, n_samples):
 	
 	C = np.ones((n_samples,1))
 	
@@ -256,24 +331,24 @@ def compute_mcmc_likelihood_lognormal(z, logpxz, n_samples):
 	return logpx
 
 # Returns a log-likelihood estimator
-def ll_estimator(model, _w, x, n_burnin=5, n_leaps=100, n_steps=10, stepsize=1e-3):
+def ll_estimator(model, _w, x, n_burnin=5, n_leaps=100, n_steps=10, stepsize=1e-3, method='kde2'):
 	#print 'MCMC Likelihood', stepsize, n_steps, n_leaps
 	
 	n_batch = x.itervalues().next().shape[1]
 	_, z_mcmc, _ = model.gen_xz(_w, x, {}, n_batch)
 	
-	hmc_dostep = hmc_step_autotune(n_steps=n_steps, init_stepsize=stepsize)
+	hmc_dostep = hmc_step_autotune_indiv(n_steps=n_steps, init_stepsize=stepsize)
 	
 	# Do one leapfrog step
 	def doLeap(w):
 		def fgrad(_z):
-			logpx, logpz, gw, gz = model.dlogpxz_dwz(w, _z, x)
+			logpx, logpz, gw, gz = model.dlogpxz_dwz(w, x, _z)
 			return logpx + logpz, gz
 		logpxz, _, _ = hmc_dostep(fgrad, z_mcmc)
 		return logpxz
 	
 	# Estimate log-likelihood from samples
-	def est_ll(w):
+	def est_ll(w, mean=False):
 		for _ in range(n_burnin):
 			doLeap(w)
 		z_list = []
@@ -283,9 +358,10 @@ def ll_estimator(model, _w, x, n_burnin=5, n_leaps=100, n_steps=10, stepsize=1e-
 			z_list.append(z_mcmc.copy())
 			logpxz_list.append(logpxz.copy())
 			
-		_z, _logpxz = mcmc_combine_samples(z_list, logpxz_list)
-		ll, var = compute_mcmc_likelihood(_z, _logpxz, len(z_list))
+		_z, _logpxz = combine_samples(z_list, logpxz_list)
+		ll, var = estimate_mcmc_likelihood(_z, _logpxz, len(z_list), method=method)
 		
+		if mean: return ll.mean(), var.mean()
 		return ll, var
 		
 	return est_ll
