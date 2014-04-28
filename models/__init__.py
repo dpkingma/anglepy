@@ -7,3 +7,5 @@ from anglepy.models.MLBN import *
 from anglepy.models.MLBN_Inverse import *
 from anglepy.models.MLBN_noAT import *
 from anglepy.models.MLBNFast import *
+
+from anglepy.models.MLP_Categorical import *

@@ -8,13 +8,14 @@ import math, inspect
 import anglepy.ndict as ndict
 
 class MLBN_Inverse(BNModel):
-	def __init__(self, n_units, prior_sd=1):
+	def __init__(self, n_units, prior_sd=1, nonlinear='tanh'):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
 		self.n_units = n_units
 		self.prior_sd = prior_sd
 		self.logvar_factor = 1e-1
 		self.logvar_const = 0
 		self.logmeanb_factor = 1
+		self.nonlinear = nonlinear
 		super(MLBN_Inverse, self).__init__('ignore')
 		
 	def factors(self, w, x, z, A):
@@ -23,8 +24,11 @@ class MLBN_Inverse(BNModel):
 		hidden = []
 		hidden.append(x['x'])
 		
+		def f_softrect(x): return T.log(T.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': T.tanh, 'sigmoid': T.nnet.sigmoid, 'softrect': f_softrect}[self.nonlinear]
+		
 		for i in range(1, len(self.n_units)-1):
-			hidden.append(T.tanh(T.dot(w['w_%i'%i], hidden[i-1]) + T.dot(w['b_'+str(i)], A)))
+			hidden.append(nonlinear(T.dot(w['w_%i'%i], hidden[i-1]) + T.dot(w['b_'+str(i)], A)))
 		
 		mean = T.dot(w['w_mean'], hidden[-1]) + self.logmeanb_factor * T.dot(w['b_mean'], A)
 		logvar = self.logvar_const + self.logvar_factor * T.dot(w['w_logvar'], hidden[-1]) + T.dot(w['b_logvar'], A)
@@ -55,10 +59,14 @@ class MLBN_Inverse(BNModel):
 		if not x.has_key('x'):
 			x['x'] = np.random.binomial(1, 0.5, size=(self.n_units[0], n_batch))
 		
+		def f_sigmoid(x): return 1./(1.+np.exp(-x))
+		def f_softrect(x): return np.log(np.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softrect': f_softrect}[self.nonlinear]
+
 		hidden = []
 		hidden.append(x['x'])
 		for i in range(1, len(self.n_units)-1):
-			hidden.append(np.tanh(np.dot(w['w_%i'%i], hidden[i-1]) + np.dot(w['b_%i'%i], A)))
+			hidden.append(nonlinear(np.dot(w['w_%i'%i], hidden[i-1]) + np.dot(w['b_%i'%i], A)))
 		
 		mean = np.dot(w['w_mean'], hidden[-1]) + self.logmeanb_factor * np.dot(w['b_mean'], A)
 		logvar = self.logvar_const + self.logvar_factor * np.dot(w['w_logvar'], hidden[-1]) + np.dot(w['b_logvar'], A)
