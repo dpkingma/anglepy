@@ -2,11 +2,21 @@ import collections
 import numpy as np
 import numpy.linalg
 import collections as C
+import gzip
+import time
+import os
+import tarfile
 
 def getCols(d, ifrom, ito):
 	result = {}
 	for i in d:
 		result[i] = d[i][:,ifrom:ito]
+	return result
+
+def getColsFromIndices(d, colIndices):
+	result = {}
+	for i in d:
+		result[i] = d[i][:,colIndices]
 	return result
 
 def sum(ds):
@@ -48,7 +58,7 @@ def cloneZeros(d):
 def cloneOnes(d):
 	result = {}
 	for i in d:
-		result[i] = np.zeros(d[i].shape)
+		result[i] = np.ones(d[i].shape)
 	return result
 
 def clone(d):
@@ -151,3 +161,52 @@ def savetext(d, name):
 	
 def ordered(d):
 	return C.OrderedDict(sorted(d.items()))
+
+# converts normal dicts to ordered dicts, ordered by keys
+def ordereddicts(ds):
+	return [ordered(d) for d in ds]
+def orderedvals(ds):
+	vals = []
+	for d in ds:
+		vals += ordered(d).values()
+	return vals
+
+# Save/Load ndict to compressed file
+# (a gzipped tar file, i.e. .tar.gz)
+# if addext=True, then '.ndict' will be appended to filename
+def savez(d, filename, addext=True):
+	if addext:
+		filename = filename + '.ndict.tar.gz'
+	fname1 = 'arrays.npz'
+	fname2 = 'names.txt'
+	_d = ordered(d)
+	# Write values (arrays)
+	np.savez(filename+'.'+fname1, *_d.values())
+	# Write keys (names of arrays)
+	with open(filename+'.'+fname2, 'w') as thefile:
+		for key in _d.keys(): thefile.write("%s\n" % key)
+	# Write TAR file
+	tar = tarfile.open(filename, "w:gz")
+	for fname in [fname1, fname2]:
+		tar.add(filename+'.'+fname, fname)
+		os.remove(filename+'.'+fname)
+	tar.close()
+
+# Loads ndict from file written with savez
+def loadz(filename):
+	tar = tarfile.open(filename, 'r:gz')
+	members = tar.getmembers()
+	members[0].name = filename+'.arrays.npz'
+	members[1].name = filename+'.names.txt'
+	tar.extract(members[0])
+	tar.extract(members[1])
+	with open(members[1].name) as f:
+		names = f.readlines()
+	arrays = np.load(members[0].name)
+	os.remove(members[0].name)
+	os.remove(members[1].name)
+	result = {}
+	for i in range(len(names)):
+		result[names[i][:-1]] = arrays['arr_'+str(i)]
+	return result
+	
