@@ -287,7 +287,7 @@ def lowerbound_wakesleep(model_q, model_p, w_q, w_p, x, L=1, convertImgs=False):
 
 
 # Training loop for variational autoencoder
-def loop_va(dostep, w, hook, hook_wavelength=2, n_iters=9999999):
+def loop_va(dostep, w, hook, dt_hook=2, n_iters=9999999):
 	
 	t_prev = time.time()
 	L = 0
@@ -297,7 +297,7 @@ def loop_va(dostep, w, hook, hook_wavelength=2, n_iters=9999999):
 		z, _L = dostep(w)
 		L += _L.mean()
 		n += 1
-		if t == 1 or t == n_iters-1 or time.time() - t_prev > hook_wavelength:
+		if t == 1 or t == n_iters-1 or time.time() - t_prev > dt_hook:
 			L /= n
 			hook(t, w, z, L)
 			L = 0
@@ -334,44 +334,6 @@ def step_va(model, x, w, n_batch=100, stepsize=1e-1, warmup=100, anneal=True, co
 		# Update parameters
 		adagrad_reg = 1e-8
 		c = 1
-		if not anneal: c /= nsteps[0]+1
-		for i in gw:
-			gw_ss[i] += gw[i]**2
-			if nsteps[0] > warmup:
-				w[i] += stepsize / np.sqrt(gw_ss[i] * c + adagrad_reg) * gw[i]
-		
-		nsteps[0] += 1
-		
-		return z.copy(), logpx + logpz - logqz
-		
-	return doStep
-
-# Learn VA with blackbox variational inference
-def step_va_blackbox(model, x, w, n_batch=100, stepsize=1e-1, warmup=100, anneal=True, convertImgs=False):
-	print 'Variational Auto-Encoder (blackbox version)', n_batch, stepsize, warmup
-	
-	# We're using adagrad stepsizes
-	gw_ss = ndict.cloneZeros(w)
-	nsteps = [0]
-	
-	def doStep(w):
-		
-		n_tot = x.itervalues().next().shape[1]
-		idx_minibatch = np.random.randint(0, n_tot, n_batch)
-		x_minibatch = {i:x[i][:,idx_minibatch] for i in x}
-		if convertImgs: x_minibatch = {i:x_minibatch[i]/256. for i in x_minibatch}
-		
-		# Sample epsilon from prior
-		z = model.gen_eps(n_batch)
-		
-		# Get gradient
-		logpx, logpz, logqz, gw = model.dL_dw(w, x_minibatch, z)		
-		_, gw_prior = model.dlogpw_dw(w)
-		gw = {i: gw[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw}
-		
-		# Update parameters
-		adagrad_reg = 1e-8
-		c = 1.
 		if not anneal: c /= nsteps[0]+1
 		for i in gw:
 			gw_ss[i] += gw[i]**2
