@@ -67,3 +67,20 @@ def log_gamma_lanczos_sub(z): #vectorised version
     return np.log(np.sqrt(2*np.pi)) + (z + 0.5) * T.log(t) - t + T.log(x)
 '''
 
+# Lazy function compilation
+# (it only gets compiled when it's actually called)
+def lazytheanofunc(on_unused_input='warn', mode='FAST_RUN'):
+	def theanofunction(*args, **kwargs):
+		f = [None]
+		if not kwargs.has_key('on_unused_input'):
+			kwargs['on_unused_input'] = on_unused_input
+		if not kwargs.has_key('mode'):
+			kwargs['mode'] = mode
+		def func(*args2, **kwargs2):
+			if f[0] == None:
+				f[0] = theano.function(*args, **kwargs)
+			return f[0](*args2, **kwargs2)
+		return func
+	return theanofunction
+
+

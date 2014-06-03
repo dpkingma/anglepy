@@ -208,5 +208,5 @@ def loadz(filename):
 	result = {}
 	for i in range(len(names)):
 		result[names[i][:-1]] = arrays['arr_'+str(i)]
-	return result
+	return ordered(result)
 	

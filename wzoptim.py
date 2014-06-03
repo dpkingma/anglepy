@@ -287,14 +287,14 @@ def lowerbound_wakesleep(model_q, model_p, w_q, w_p, x, L=1, convertImgs=False):
 
 
 # Training loop for variational autoencoder
-def loop_va(dostep, w, hook, dt_hook=2, n_iters=9999999):
+def loop_va(dostep, v, w, hook, dt_hook=2, n_iters=9999999):
 	
 	t_prev = time.time()
 	L = 0
 	n = 0
 	
 	for t in xrange(1, n_iters):
-		z, _L = dostep(w)
+		z, _L = dostep(v, w)
 		L += _L.mean()
 		n += 1
 		if t == 1 or t == n_iters-1 or time.time() - t_prev > dt_hook:
@@ -306,35 +306,43 @@ def loop_va(dostep, w, hook, dt_hook=2, n_iters=9999999):
 	
 	print 'Optimization loop finished'
 
-# SGVB
-def step_va(model, x, w, n_batch=100, stepsize=1e-1, warmup=100, anneal=True, convertImgs=False):
+# Learning step for variational auto-encoder
+def step_vae(model, x, v, w, n_batch=100, stepsize=1e-1, warmup=100, anneal=True, convertImgs=False, binarize=False):
 	print 'Variational Auto-Encoder', n_batch, stepsize, warmup
 	
 	# We're using adagrad stepsizes
+	gv_ss = ndict.cloneZeros(v)
 	gw_ss = ndict.cloneZeros(w)
 	
 	nsteps = [0]
 	
-	def doStep(w):
+	def doStep(v, w):
 		
 		n_tot = x.itervalues().next().shape[1]
 		idx_minibatch = np.random.randint(0, n_tot, n_batch)
 		x_minibatch = {i:x[i][:,idx_minibatch] for i in x}
-		if convertImgs: x_minibatch = {i:x_minibatch[i]/256. for i in x_minibatch}
-		
+		if convertImgs: x_minibatch['x'] = x_minibatch['x']/256.
+		if binarize: x_minibatch['x'] = np.random.binomial(n=1, p=x_minibatch['x'])
+        
 		# Sample epsilon from prior
 		z = model.gen_eps(n_batch)
 		#for i in z: z[i] *= 0
 		
 		# Get gradient
-		logpx, logpz, logqz, gw = model.dL_dw(w, x_minibatch, z)		
-		_, gw_prior = model.dlogpw_dw(w)
+		logpx, logpz, logqz, gv, gw = model.dL_dw(v, w, x_minibatch, z)		
+		_, _, gv_prior, gw_prior = model.dlogpw_dw(v, w)
+		gv = {i: gv[i] + float(n_batch)/n_tot * gv_prior[i] for i in gv}
 		gw = {i: gw[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw}
 		
 		# Update parameters
 		adagrad_reg = 1e-8
 		c = 1
 		if not anneal: c /= nsteps[0]+1
+		for i in gv:
+			gv_ss[i] += gv[i]**2
+			if nsteps[0] > warmup:
+				v[i] += stepsize / np.sqrt(gv_ss[i] * c + adagrad_reg) * gv[i]
+		
 		for i in gw:
 			gw_ss[i] += gw[i]**2
 			if nsteps[0] > warmup:
@@ -348,7 +356,7 @@ def step_va(model, x, w, n_batch=100, stepsize=1e-1, warmup=100, anneal=True, co
 
 # Compute likelihood lower bound given a variational auto-encoder
 # L is number of samples
-def est_loglik_va(model, w, x, L=1, convertImgs=False):
+def est_loglik_va(model, v, w, x, L=1, convertImgs=False):
 	
 	if convertImgs: x = {i:x[i]/256. for i in x}
 	n_batch = x.itervalues().next().shape[1]
@@ -358,7 +366,7 @@ def est_loglik_va(model, w, x, L=1, convertImgs=False):
 	for _ in range(L):
 		# Sample from eps
 		z = model.gen_eps(n_batch)
-		logpx, logpz, logqz = model.L(w, x, z)		
+		logpx, logpz, logqz = model.L(v, w, x, z)		
 		lowbound += (logpx + logpz - logqz).mean()
 		px += np.exp(logpx + logpz - logqz)
 	
@@ -366,20 +374,20 @@ def est_loglik_va(model, w, x, L=1, convertImgs=False):
 	logpx = np.log(px / L).mean()
 	return lowbound, logpx
 
-# Naive SVB algorithm
+# Naive stochastic variational inference and learning
 # NOTE: Does NOT use prior on variational parameters
-def step_naivesvb(model_q, model_p, x, w_q, n_batch=100, ada_stepsize=1e-1, warmup=100, reg=1e-8, convertImgs=False):
+def step_naivesvb(model_q, model_p, x, v, n_batch=100, ada_stepsize=1e-1, warmup=100, reg=1e-8, convertImgs=False):
 	print 'Naive SV Est', ada_stepsize
 	
 	# We're using adagrad stepsizes
-	gw_q_ss = ndict.cloneZeros(w_q)
-	gw_p_ss = ndict.cloneZeros(model_p.init_w())
+	gv_ss = ndict.cloneZeros(v)
+	gw_ss = ndict.cloneZeros(model_p.init_w())
 	
 	nsteps = [0]
 	
 	do_adagrad = True
 	
-	def doStep(w_p):
+	def doStep(w):
 		
 		n_tot = x.itervalues().next().shape[1]
 		idx_minibatch = np.random.randint(0, n_tot, n_batch)
@@ -398,21 +406,21 @@ def step_naivesvb(model_q, model_p, x, w_q, n_batch=100, ada_stepsize=1e-1, warm
 					w[i] += 1e-4 * gw[i]
 		
 		# Phase 1: use z ~ q(z|x) to update model_p
-		_, z, _  = model_q.gen_xz(w_q, x_minibatch, {}, n_batch)
-		_, logpz_q = model_q.logpxz(w_q, x_minibatch, z)
-		logpx_p, logpz_p, gw_p, gz_p = model_p.dlogpxz_dwz(w_p, x_minibatch, z)
-		_, gw_prior = model_p.dlogpw_dw(w_p)
-		gw_p = {i: gw_p[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw_p}
+		_, z, _  = model_q.gen_xz(v, x_minibatch, {}, n_batch)
+		_, logpz_q = model_q.logpxz(v, x_minibatch, z)
+		logpx_p, logpz_p, gw, _ = model_p.dlogpxz_dwz(w, x_minibatch, z)
+		_, gw_prior = model_p.dlogpw_dw(w)
+		gw = {i: gw[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw}
 		
 		# Phase 2: use x ~ p(x|z) to update model_q
-		_, _, gw_q, _ = model_q.dlogpxz_dwz(w_q, x_minibatch, z)
+		_, _, gv, _ = model_q.dlogpxz_dwz(v, x_minibatch, z)
 		#_, gw_prior = model_q.dlogpw_dw(w_q)
 		#gw_q = {i: gw_q[i] + float(n_batch)/n_tot * gw_prior[i] for i in gw_q}
 		weight = np.sum(logpx_p) + np.sum(logpz_p) - np.sum(logpz_q) - float(n_batch)
-		gw_q = {i: gw_q[i] * weight for i in gw_q}
+		gv = {i: gv[i] * weight for i in gv}
 		
-		optimize(w_p, gw_p, gw_p_ss, ada_stepsize)
-		optimize(w_q, gw_q, gw_q_ss, ada_stepsize)
+		optimize(w, gw, gw_ss, ada_stepsize)
+		optimize(v, gv, gv_ss, ada_stepsize)
 		
 		nsteps[0] += 1
 		
@@ -421,23 +429,23 @@ def step_naivesvb(model_q, model_p, x, w_q, n_batch=100, ada_stepsize=1e-1, warm
 	return doStep
 
 # Black-box variational inference algorithm
-def step_svb_blackbox(model_q, model_p, x, phi, n_batch=10, n_subbatch=10, ada_stepsize=1e-1, warmup=100, convertImgs=False):
+def step_svb_blackbox(model_q, model_p, x, v, n_batch=10, n_subbatch=10, ada_stepsize=1e-1, warmup=100, convertImgs=False):
 	print 'Black-box variational inference', n_batch, ada_stepsize, 
 	
 	# We're using adagrad stepsizes
-	gphi_ss = ndict.cloneZeros(phi)
+	gv_ss = ndict.cloneZeros(v)
 	gw_ss = ndict.cloneZeros(model_p.init_w())
 	
 	# Control variate covariance and variance
-	cv_cov = ndict.cloneZeros(phi)
-	cv_var = ndict.cloneZeros(phi)
+	cv_cov = ndict.cloneZeros(v)
+	cv_var = ndict.cloneZeros(v)
 	cv_lr = 0.01
 	
 	nsteps = [0]
 	
 	def doStep(w):
 		
-		grad = ndict.cloneZeros(phi)
+		grad = ndict.cloneZeros(v)
 		gw = ndict.cloneZeros(w)
 
 		for l in range(n_batch):
@@ -447,18 +455,18 @@ def step_svb_blackbox(model_q, model_p, x, phi, n_batch=10, n_subbatch=10, ada_s
 			if convertImgs: x_minibatch = {i:x_minibatch[i]/256. for i in x_minibatch}
 			
 			# Use z ~ q(z|x) to compute d[LB]/d[gw]
-			_, z, _  = model_q.gen_xz(phi, x_minibatch, {}, n_subbatch)
-			_, logpz_q = model_q.logpxz(phi, x_minibatch, z)
+			_, z, _  = model_q.gen_xz(v, x_minibatch, {}, n_subbatch)
+			_, logpz_q = model_q.logpxz(v, x_minibatch, z)
 			logpx_p, logpz_p, _gw, gz_p = model_p.dlogpxz_dwz(w, x_minibatch, z)
 			for i in _gw: gw[i] += _gw[i]
 			
-			# Compute d[LB]/d[gphi]  where gphi = phi (variational params)
-			_, _, gphi, _ = model_q.dlogpxz_dwz(phi, x_minibatch, z)
+			# Compute d[LB]/d[gv]  where gv = v (variational params)
+			_, _, gv, _ = model_q.dlogpxz_dwz(v, x_minibatch, z)
 			weight = np.sum(logpx_p) + np.sum(logpz_p) - np.sum(logpz_q)
 			
-			for i in phi:
-				f = gphi[i] * weight
-				h = gphi[i]
+			for i in v:
+				f = gv[i] * weight
+				h = gv[i]
 				cv_cov[i] = cv_cov[i] + cv_lr * (f * h - cv_cov[i])
 				cv_var[i] = cv_var[i] + cv_lr * (h**2 - cv_var[i])
 				grad[i] += f - (cv_cov[i]/(cv_var[i] + 1e-8)) * h
@@ -474,13 +482,13 @@ def step_svb_blackbox(model_q, model_p, x, phi, n_batch=10, n_subbatch=10, ada_s
 					_w[i] += stepsize / np.sqrt(gw_ss[i]+reg) * _gw[i]
 
 		optimize(w, gw, gw_ss, ada_stepsize)
-		optimize(phi, grad, gphi_ss, ada_stepsize)
+		optimize(v, grad, gv_ss, ada_stepsize)
 		
 		nsteps[0] += 1
 		
 		if ndict.hasNaN(grad):
 			raise Exception()
-		if ndict.hasNaN(phi):
+		if ndict.hasNaN(v):
 			raise Exception()
 		
 		return z.copy(), logpx_p + logpz_p - logpz_q

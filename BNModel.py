@@ -4,24 +4,9 @@ import theano.tensor as T
 import math
 import theano.compile
 import anglepy.ndict as ndict
+from anglepy.misc import lazytheanofunc
 import anglepy.logpdfs
 import inspect
-
-# Lazy function compilation
-# (it only gets compiled when it's actually called)
-def lazytheanofunc(on_unused_input='warn', mode='FAST_RUN'):
-	def theanofunction(*args, **kwargs):
-		f = [None]
-		if not kwargs.has_key('on_unused_input'):
-			kwargs['on_unused_input'] = on_unused_input
-		if not kwargs.has_key('mode'):
-			kwargs['mode'] = mode
-		def func(*args2, **kwargs2):
-			if f[0] == None:
-				f[0] = theano.function(*args, **kwargs)
-			return f[0](*args2, **kwargs2)
-		return func
-	return theanofunction
 
 # Model
 class BNModel(object):
@@ -37,30 +22,10 @@ class BNModel(object):
 		
 		# Helper variables
 		A = T.dmatrix('A')
+		self.var_A = A
 		
 		# Get gradient symbols
 		allvars = w.values()  + x.values() + z.values() + [A] # note: '+' concatenates lists
-		
-		# TODO: Split Hessian code from the core code (it's too rarely used), e.g. just in experiment script.
-		if False and hessian:
-			# Hessian of logpxz wrt z
-			raise Exception("Needs fix: assumes fixed n_batch, which is not true anymore")
-			n_batch = 100
-			
-			# Have to convert to vector and back to matrix because of stupid Theano hessian requirement
-			z_concat = T.concatenate([T.flatten(z[i]) for i in z])
-			
-			# Translate back, we need the correct dimensions
-			_, _z, _ = self.gen_xz(self.init_w(), {}, {}, n_batch=n_batch)
-			shape_z = {i:_z[i].shape for i in _z}
-			z = {}
-			pointer = 0
-			for i in _z:
-				length = np.prod(shape_z[i])
-				shape = shape_z[i]
-				z[i] = T.reshape(z_concat[pointer:pointer+length], shape)
-				pointer += length
-			z = ndict.ordered(z)
 		
 		if False:
 			# Put test values
@@ -74,7 +39,13 @@ class BNModel(object):
 			for i in _x: x[i].tag.test_value = _x[i]
 			for i in _z: z[i].tag.test_value = _z[i]
 		
-		logpw, logpx, logpz, dists = self.factors(w, x, z, A)
+		# TODO: more beautiful/standardized way of setting distributions
+		# (should be even simpler then this) 
+		self.dist_px = {}
+		self.dist_pz = {}
+		
+		logpw, logpx, logpz = self.factors(w, x, z, A)
+		self.var_logpw, self.var_logpx, self.var_logpz = logpw, logpx, logpz
 		
 		# Complete-data likelihood estimate
 		logpxz = logpx.sum() + logpz.sum()
@@ -89,12 +60,6 @@ class BNModel(object):
 		dlogpw_dw = T.grad(logpw, w.values(), disconnected_inputs='ignore')
 		self.f_logpw = theanofunction(w.values(), logpw)
 		self.f_dlogpw_dw = theanofunction(w.values(), [logpw] + dlogpw_dw)
-		
-		# distributions
-		self.f_dists = {}
-		for name in dists:
-			_vars, dist = dists[name]
-			self.f_dists[name] = theanofunction_silent(_vars, dist)
 		
 		if False:
 			# MC-LIKELIHOOD
@@ -128,12 +93,12 @@ class BNModel(object):
 	def init_w(self): raise NotImplementedError()
 	
 	# Prediction
-	def distribution(self, w, x, z, name):
-		x, z = self.xz_to_theano(x, z)
-		w, x, z = ndict.ordereddicts((w, x, z))
-		A = self.get_A(x)
-		allvars = w.values() + x.values() + z.values() + [A]
-		return self.f_dists[name](*allvars)
+	#def distribution(self, w, x, z, name):
+	#	x, z = self.xz_to_theano(x, z)
+	#	w, x, z = ndict.ordereddicts((w, x, z))
+	#	A = self.get_A(x)
+	#	allvars = w.values() + x.values() + z.values() + [A]
+	#	return self.f_dists[name](*allvars)
 	
 	# Numpy <-> Theano var conversion
 	def xz_to_theano(self, x, z): return x, z

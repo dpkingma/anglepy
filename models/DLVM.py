@@ -30,7 +30,7 @@ class DLVM(ap.VAEModel):
 		
 		super(DLVM, self).__init__()
 	
-	def factors(self, w, x, z, A):
+	def factors(self, v, w, x, z, A):
 			
 		'''
 		z['eps'] is the independent epsilons (Gaussian with unit variance)
@@ -66,18 +66,18 @@ class DLVM(ap.VAEModel):
 			if i > 0:
 				input = hq[i-1]
 			
-			q_w = w['q_w'+str(i)]			
+			q_w = v['w'+str(i)]			
 			if nonlinear_q == 'rectlin':
 				if i == 0:	B = np.ones((1, self.n_x))
 				else:		B = np.ones((1, self.n_hq[i-1]))
 				q_w = q_w / T.dot((T.dot(q_w**2, B.T)**0.5), B)
 			
-			hq.append(nonlinear_q(T.dot(q_w, input) + T.dot(w['q_b'+str(i)], A)))
+			hq.append(nonlinear_q(T.dot(q_w, input) + T.dot(v['b'+str(i)], A)))
 
 			# Compute virtual sample
 			if self.type_qz in ['gaussian', 'gaussianmarg']:
-				q_mean = T.dot(w['q_mean_w'+str(i)], hq[i]) + T.dot(w['q_mean_b'+str(i)], A)
-				q_logvar = T.dot(w['q_logvar_w'+str(i)], hq[i]) + T.dot(w['q_logvar_b'+str(i)], A)
+				q_mean = T.dot(v['mean_w'+str(i)], hq[i]) + T.dot(v['mean_b'+str(i)], A)
+				q_logvar = T.dot(v['logvar_w'+str(i)], hq[i]) + T.dot(v['logvar_b'+str(i)], A)
 				_z = q_mean + T.exp(0.5 * q_logvar) * z['eps'+str(i)]
 				zs.append(_z)
 			else: raise Exception()
@@ -106,7 +106,7 @@ class DLVM(ap.VAEModel):
 		for j in range(len(self.n_z)):
 			i = len(self.n_z)-j-1
 			
-			p_wz = w['p_wz'+str(i)]
+			p_wz = w['wz'+str(i)]
 			if self.nonlinear_p == 'rectlin':
 				B = np.ones((1, self.n_z[i]))
 				p_wz = p_wz / T.dot(T.dot(p_wz**2, B.T)**0.5, B)
@@ -114,8 +114,8 @@ class DLVM(ap.VAEModel):
 			
 			y = T.dot(p_wz, zs[i])
 			if j > 0:
-				y += T.dot(w['p_w'+str(i)], hp[i+1])
-			y += T.dot(w['p_b'+str(i)], A)
+				y += T.dot(w['w'+str(i)], hp[i+1])
+			y += T.dot(w['b'+str(i)], A)
 			hp[i] = nonlinear_p(y)
 		
 		if self.type_px == 'bernoulli':
@@ -135,21 +135,22 @@ class DLVM(ap.VAEModel):
 		# Note: logpw is a scalar
 		def f_prior(_w, prior_sd=self.prior_sd):
 			return ap.logpdfs.normal(_w, 0, prior_sd).sum()
+		logpv = 0
 		logpw = 0
 		for i in range(len(self.n_hq)):
-			logpw += f_prior(w['q_b'+str(i)])
+			logpv += f_prior(v['b'+str(i)])
 			if self.nonlinear_q != 'rectlin':
-				logpw += f_prior(w['q_w'+str(i)])
+				logpv += f_prior(v['w'+str(i)])
 			if self.type_qz in ['gaussian','gaussianmarg']:
-				logpw += f_prior(w['q_mean_b'+str(i)])
-				logpw += f_prior(w['q_logvar_b'+str(i)])
-				logpw += f_prior(w['q_mean_w'+str(i)])
-				logpw += f_prior(w['q_logvar_w'+str(i)])
+				logpv += f_prior(v['mean_b'+str(i)])
+				logpv += f_prior(v['logvar_b'+str(i)])
+				logpv += f_prior(v['mean_w'+str(i)])
+				logpv += f_prior(v['logvar_w'+str(i)])
 			if i < len(self.n_hq)-1:
 				if self.nonlinear_p != 'rectlin':
-					logpw += f_prior(w['p_w'+str(i)])
-				logpw += f_prior(w['p_b'+str(i)])
-			logpw += f_prior(w['p_wz'+str(i)])
+					logpw += f_prior(w['w'+str(i)])
+				logpw += f_prior(w['b'+str(i)])
+			logpw += f_prior(w['wz'+str(i)])
 		
 		logpw += f_prior(w['out_w'])
 		if self.type_px in ['sigmoidgaussian', 'gaussian']:
@@ -158,7 +159,7 @@ class DLVM(ap.VAEModel):
 			for i in range(1, len(self.n_z)):
 				logpw += f_prior(w['logv'+str(i)])
 			
-		return logpw, logpx, logpz, logqz, {}
+		return logpv, logpw, logpx, logpz, logqz, {}
 	
 	# TODO: separate 'eps' random variable (instead of being in 'z')
 	
@@ -168,7 +169,7 @@ class DLVM(ap.VAEModel):
 		return z
 	
 	# Generate variables
-	def gen_xz(self, w, x, z, n_batch):
+	def gen_xz(self, v, w, x, z, n_batch):
 
 		# Require epsilon
 		if not z.has_key('eps0'):
@@ -199,18 +200,18 @@ class DLVM(ap.VAEModel):
 				if i > 0:
 					input = hq[i-1]
 					
-				q_w = w['q_w'+str(i)]			
+				q_w = v['w'+str(i)]			
 				if nonlinear_q == 'rectlin':
 					if i == 0:	B = np.zeros((1, self.n_x))
 					else:		B = np.zeros((1, self.n_hq[i-1]))
 					q_w = q_w / np.dot((np.dot(q_w**2, B.T)**0.5), B)
 	
-				hq.append(nonlinear_q(np.dot(q_w, input) + np.dot(w['q_b'+str(i)], A)))
+				hq.append(nonlinear_q(np.dot(q_w, input) + np.dot(v['b'+str(i)], A)))
 			
 				# Compute virtual sample
 				if self.type_qz in ['gaussian','gaussianmarg']:
-					q_mean = np.dot(w['q_mean_w'+str(i)], hq[i]) + np.dot(w['q_mean_b'+str(i)], A)
-					q_logvar = np.dot(w['q_logvar_w'+str(i)], hq[i]) + np.dot(w['q_logvar_b'+str(i)], A)
+					q_mean = np.dot(v['mean_w'+str(i)], hq[i]) + np.dot(v['mean_b'+str(i)], A)
+					q_logvar = np.dot(v['logvar_w'+str(i)], hq[i]) + np.dot(v['logvar_b'+str(i)], A)
 					_z['z_mean'+str(i)] = q_mean
 					_z['z_logvar'+str(i)] = q_logvar
 					z['z'+str(i)] = q_mean + np.exp(0.5 * q_logvar) * z['eps'+str(i)]
@@ -230,7 +231,7 @@ class DLVM(ap.VAEModel):
 		for j in range(len(self.n_hp)):
 			i = len(self.n_hp)-j-1
 			
-			p_wz = w['p_wz'+str(i)]
+			p_wz = w['wz'+str(i)]
 			if self.nonlinear_p == 'rectlin':
 				B = np.zeros((1, self.n_z[i]))
 				p_wz = p_wz / np.dot(np.dot(p_wz**2, B.T)**0.5, B)
@@ -238,8 +239,8 @@ class DLVM(ap.VAEModel):
 			
 			y = np.dot(p_wz, z['z'+str(i)])
 			if j > 0:
-				y += np.dot(w['p_w'+str(i)], hp[i+1])
-			y += np.dot(w['p_b'+str(i)], A)
+				y += np.dot(w['w'+str(i)], hp[i+1])
+			y += np.dot(w['b'+str(i)], A)
 			hp[i] = nonlinear_p(y)
 				
 		if self.type_px == 'bernoulli':
@@ -264,31 +265,35 @@ class DLVM(ap.VAEModel):
 	
 	def variables(self):
 		
-		# Define parameters 'w'
+		# Parameters of q
+		v = {}
+		for i in range(len(self.n_hq)):
+			v['w'+str(i)] = T.dmatrix('w'+str(i))
+			v['b'+str(i)] = T.dmatrix('b'+str(i))
+			v['mean_w'+str(i)] = T.dmatrix('mean_w'+str(i))
+			v['mean_b'+str(i)] = T.dmatrix('mean_b'+str(i))
+			if self.type_qz in ['gaussian','gaussianmarg']:
+				v['logvar_w'+str(i)] = T.dmatrix('logvar_w'+str(i))
+				v['logvar_b'+str(i)] = T.dmatrix('logvar_b'+str(i))
+		
+		# Parameters of p
 		w = {}
 		for i in range(len(self.n_hq)):
-			w['q_w'+str(i)] = T.dmatrix('q_w'+str(i))
-			w['q_b'+str(i)] = T.dmatrix('q_b'+str(i))
-			w['q_mean_w'+str(i)] = T.dmatrix('q_mean_w'+str(i))
-			w['q_mean_b'+str(i)] = T.dmatrix('q_mean_b'+str(i))
-			if self.type_qz in ['gaussian','gaussianmarg']:
-				w['q_logvar_w'+str(i)] = T.dmatrix('q_logvar_w'+str(i))
-				w['q_logvar_b'+str(i)] = T.dmatrix('q_logvar_b'+str(i))
 			if i < len(self.n_hq)-1:
-				w['p_w'+str(i)] = T.dmatrix('p_w'+str(i))
-			w['p_b'+str(i)] = T.dmatrix('p_b'+str(i))
-			w['p_wz'+str(i)] = T.dmatrix('p_wz'+str(i))
+				w['w'+str(i)] = T.dmatrix('w'+str(i))
+			w['b'+str(i)] = T.dmatrix('b'+str(i))
+			w['wz'+str(i)] = T.dmatrix('wz'+str(i))
 		w['out_w'] = T.dmatrix('out_w')
 		w['out_b'] = T.dmatrix('out_b')
 		
 		if self.type_px == 'sigmoidgaussian' or self.type_px == 'gaussian':
 			w['out_logvar_w'] = T.dmatrix('out_logvar_w')
 			w['out_logvar_b'] = T.dmatrix('out_logvar_b')
-			
+		
 		if self.type_pz == 'studentt':
 			for i in range(1, len(self.n_z)):
 				w['logv'+str(i)] = T.dmatrix('logv'+str(i))
-
+		
 		# Define latent variables 'z'
 		z = {}
 		for i in range(len(self.n_z)):
@@ -297,33 +302,34 @@ class DLVM(ap.VAEModel):
 		# Define observed variables 'x'
 		x = {'x': T.dmatrix('x')}
 		
-		return w, x, z
+		return v, w, x, z
 	
 	def init_w(self, std=1e-2):
 		
 		def rand(size):
 			return np.random.normal(0, std, size=size)
 		
+		v = {}
 		w = {}
-		w['q_w0'] = rand((self.n_hq[0], self.n_x))
-		w['q_b0'] = rand((self.n_hq[0], 1))
+		v['w0'] = rand((self.n_hq[0], self.n_x))
+		v['b0'] = rand((self.n_hq[0], 1))
 		for i in range(len(self.n_hq)):
 			if i == 0:
-				w['q_w'+str(i)] = rand((self.n_hq[i], self.n_x))
+				v['w'+str(i)] = rand((self.n_hq[i], self.n_x))
 			else:
-				w['q_w'+str(i)] = rand((self.n_hq[i], self.n_hq[i-1]))
-			w['q_b'+str(i)] = rand((self.n_hq[i], 1))
+				v['w'+str(i)] = rand((self.n_hq[i], self.n_hq[i-1]))
+			v['b'+str(i)] = rand((self.n_hq[i], 1))
 			
 			if self.type_qz in ['gaussian','gaussianmarg']:
-				w['q_mean_w'+str(i)] = rand((self.n_z[i], self.n_hq[i]))
-				w['q_mean_b'+str(i)] = rand((self.n_z[i], 1))
-				w['q_logvar_w'+str(i)] = np.zeros((self.n_z[i], self.n_hq[i]))
-				w['q_logvar_b'+str(i)] = np.zeros((self.n_z[i], 1))
+				v['mean_w'+str(i)] = rand((self.n_z[i], self.n_hq[i]))
+				v['mean_b'+str(i)] = rand((self.n_z[i], 1))
+				v['logvar_w'+str(i)] = np.zeros((self.n_z[i], self.n_hq[i]))
+				v['logvar_b'+str(i)] = np.zeros((self.n_z[i], 1))
 			
-			w['p_wz'+str(i)] = rand((self.n_hp[i], self.n_z[i]))
-			w['p_b'+str(i)] = rand((self.n_hp[i], 1))
+			w['wz'+str(i)] = rand((self.n_hp[i], self.n_z[i]))
+			w['b'+str(i)] = rand((self.n_hp[i], 1))
 			if i < len(self.n_hq)-1:
-				w['p_w'+str(i)] = rand((self.n_hp[i], self.n_hp[i+1]))
+				w['w'+str(i)] = rand((self.n_hp[i], self.n_hp[i+1]))
 			
 		w['out_w'] = rand((self.n_x, self.n_hp[0]))
 		w['out_b'] = np.zeros((self.n_x, 1))
@@ -335,5 +341,5 @@ class DLVM(ap.VAEModel):
 			for i in range(1, len(self.n_z)):
 				w['logv'+str(i)] = np.zeros((self.n_z[i], 1))
 		
-		return w
+		return v, w
 	

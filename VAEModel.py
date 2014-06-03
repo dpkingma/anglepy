@@ -4,28 +4,13 @@ import theano.tensor as T
 import math
 import theano.compile
 import anglepy.ndict as ndict
+from anglepy.misc import lazytheanofunc
 import anglepy.logpdfs
 import inspect
 
 # ====
 # VARIATIONAL AUTO-ENCODER MODEL
 # ====
-
-# Lazy function compilation
-# (it only gets compiled when it's actually called)
-def lazytheanofunc(on_unused_input='warn', mode='FAST_RUN'):
-	def theanofunction(*args, **kwargs):
-		f = [None]
-		if not kwargs.has_key('on_unused_input'):
-			kwargs['on_unused_input'] = on_unused_input
-		if not kwargs.has_key('mode'):
-			kwargs['mode'] = mode
-		def func(*args2, **kwargs2):
-			if f[0] == None:
-				f[0] = theano.function(*args, **kwargs)
-			return f[0](*args2, **kwargs2)
-		return func
-	return theanofunction
 
 # Model
 class VAEModel(object):
@@ -36,35 +21,44 @@ class VAEModel(object):
 		theanofunction_silent = lazytheanofunc('ignore', mode='FAST_RUN')
 		
 		# Create theano expressions
-		w, x, z = ndict.ordereddicts(self.variables())
-		self.var_w, self.var_x, self.var_z, = w, x, z
+		v, w, x, z = ndict.ordereddicts(self.variables())
+		self.var_v, self.var_w, self.var_x, self.var_z, = v, w, x, z
 		
 		# Helper variables
 		A = T.dmatrix('A')
+		self.var_A = A
 		
 		# Get gradient symbols
-		allvars = w.values()  + x.values() + z.values() + [A] # note: '+' concatenates lists
-				
-		logpw, logpx, logpz, logqz, dists = self.factors(w, x, z, A)
+		allvars = v.values() + w.values() + x.values() + z.values() + [A] # note: '+' concatenates lists
+		
+		# TODO: more beautiful/standardized way of setting distributions
+		# (should be even simpler then this) 
+		self.dist_qz = {}
+		self.dist_px = {}
+		self.dist_pz = {}
+		
+		logpv, logpw, logpx, logpz, logqz = self.factors(v, w, x, z, A)
 		
 		# Log-likelihood lower bound
-		L = logpx.sum() + logpz.sum() - logqz.sum()
 		self.f_L = theanofunction(allvars, [logpx, logpz, logqz])
-		
-		dL_dw = T.grad(L, w.values() + z.values())
+		dL_dw = T.grad((logpx + logpz - logqz).sum(), v.values() + w.values())
 		self.f_dL_dw = theanofunction(allvars, [logpx, logpz, logqz] + dL_dw)
 		
+		weights = T.dmatrix()
+		dL_weighted_dw = T.grad((weights * (logpx + logpz - logqz)).sum(), v.values() + w.values())
+		self.f_dL_weighted_dw = theanofunction(allvars + [weights], [logpx + logpz - logqz, weights*(logpx + logpz - logqz)] + dL_weighted_dw)
+		
 		# prior
-		dlogpw_dw = T.grad(logpw, w.values(), disconnected_inputs='ignore')
-		self.f_logpw = theanofunction(w.values(), logpw)
-		self.f_dlogpw_dw = theanofunction(w.values(), [logpw] + dlogpw_dw)
+		dlogpw_dw = T.grad(logpv + logpw, v.values() + w.values(), disconnected_inputs='ignore')
+		self.f_logpw = theanofunction(v.values() + w.values(), [logpv, logpw])
+		self.f_dlogpw_dw = theanofunction(v.values() + w.values(), [logpv, logpw] + dlogpw_dw)
 		
 		# distributions
-		self.f_dists = {}
-		for name in dists:
-			_vars, dist = dists[name]
-			self.f_dists[name] = theanofunction_silent(_vars, dist)
-					
+		#self.f_dists = {}
+		#for name in dists:
+		#	_vars, dist = dists[name]
+		#	self.f_dists[name] = theanofunction_silent(_vars, dist)
+		
 	# NOTE: IT IS ESSENTIAL THAT DICTIONARIES OF SYMBOLIC VARS AND RESPECTIVE NUMPY VALUES HAVE THE SAME KEYS
 	# (OTHERWISE FUNCTION ARGUMENTS ARE IN INCORRECT ORDER)
 	
@@ -74,31 +68,33 @@ class VAEModel(object):
 	def init_w(self): raise NotImplementedError()
 	
 	# Prediction
-	def distribution(self, w, x, z, name):
+	# TODO: refactor to new solution
+	def distribution(self, v, w, x, z, name):
 		x, z = self.xz_to_theano(x, z)
-		w, x, z = ndict.ordereddicts((w, x, z))
+		v, w, x, z = ndict.ordereddicts((v, w, x, z))
 		A = self.get_A(x)
-		allvars = w.values() + x.values() + z.values() + [A]
+		allvars = v.values() + w.values() + x.values() + z.values() + [A]
 		return self.f_dists[name](*allvars)
 	
 	# Numpy <-> Theano var conversion
 	def xz_to_theano(self, x, z): return x, z
-	def gw_to_numpy(self, gw): return gw
+	def gw_to_numpy(self, gv, gw): return gv, gw
 	
 	# A = np.ones((1, n_batch))
 	def get_A(self, x): return np.ones((1, x.itervalues().next().shape[1]))
 		
 	# Likelihood: logp(x,z|w)
-	def L(self, w, x, z):
+	def L(self, v, w, x, z):
 		x, z = self.xz_to_theano(x, z)
-		w, z, x = ndict.ordereddicts((w, z, x))
+		v, w, z, x = ndict.ordereddicts((v, w, z, x))
 		A = self.get_A(x)
-		allvars = w.values() + x.values() + z.values() + [A]
+		allvars = v.values() + w.values() + x.values() + z.values() + [A]
 		logpx, logpz, logqz = self.f_L(*allvars)
 		
 		if np.isnan(logpx).any() or np.isnan(logpz).any() or np.isnan(logqz).any():
-			print 'v: ', logpx, logpz, logqz
+			print 'logp: ', logpx, logpz, logqz
 			print 'Values:'
+			ndict.p(v)
 			ndict.p(w)
 			ndict.p(x)
 			ndict.p(z)
@@ -106,39 +102,56 @@ class VAEModel(object):
 		
 		return logpx, logpz, logqz
 	
-	# Gradient of logp(x,z|w) and logq(z) w.r.t. parameters
-	def dL_dw(self, w, x, z):
-		
-		x, z = self.xz_to_theano(x, z)
-		w, z, x = ndict.ordereddicts((w, z, x))
-		A = self.get_A(x)
-		allvars = w.values() + x.values() + z.values() + [A]
-		r = self.f_dL_dw(*allvars)
-		logpx, logpz, logqz, gw = r[0], r[1], r[2], dict(zip(w.keys(), r[3:3+len(w)]))
-		
-		if ndict.hasNaN(gw):
-				print 'logpx: ', logpx
-				print 'logpz: ', logpz
-				print 'logqz: ', logqz
-				print 'Values:'
+	
+	def checknan(self, v, w, gv, gw):
+		if ndict.hasNaN(gv) or ndict.hasNaN(gw):
+				#print 'logpx: ', logpx
+				#print 'logpz: ', logpz
+				#print 'logqz: ', logqz
+				print 'v:'
+				ndict.p(v)
+				print 'w:'
 				ndict.p(w)
-				print 'Gradients:'
+				print 'gv:'
+				ndict.p(gv)
+				print 'gw:'
 				ndict.p(gw)
 				raise Exception("dL_dw(): NaN found in gradients")
 		
-		gw = self.gw_to_numpy(gw)
-		return logpx, logpz, logqz, gw
+	# Gradient of logp(x,z|w) and logq(z) w.r.t. parameters
+	def dL_dw(self, v, w, x, z):
+		x, z = self.xz_to_theano(x, z)
+		v, w, z, x = ndict.ordereddicts((v, w, z, x))
+		A = self.get_A(x)
+		allvars = v.values() + w.values() + x.values() + z.values() + [A]
+		r = self.f_dL_dw(*allvars)
+		logpx, logpz, logqz, gv, gw = r[0], r[1], r[2], dict(zip(v.keys(), r[3:3+len(v)])), dict(zip(w.keys(), r[3+len(v):3+len(v)+len(w)]))
+		self.checknan(v, w, gv, gw)		
+		gv, gw = self.gw_to_numpy(gv, gw)
+		return logpx, logpz, logqz, gv, gw
+
+	# Gradient of logp(x,z|w) and logq(z) w.r.t. parameters
+	def dL_weighted_dw(self, v, w, x, z, weights):
+		x, z = self.xz_to_theano(x, z)
+		v, w, z, x = ndict.ordereddicts((v, w, z, x))
+		A = self.get_A(x)
+		allvars = v.values() + w.values() + x.values() + z.values() + [A]
+		r = self.f_dL_weighted_dw(*(allvars+[weights]))
+		L_unweighted, L_weighted, gv, gw = r[0], r[1], dict(zip(v.keys(), r[2:2+len(v)])), dict(zip(w.keys(), r[2+len(v):2+len(v)+len(w)]))
+		self.checknan(v, w, gv, gw)
+		gv, gw = self.gw_to_numpy(gv, gw)
+		return L_unweighted, L_weighted, gv, gw
 	
 	# Prior: logp(w)
-	def logpw(self, w):
-		logpw = self.f_logpw(*ndict.orderedvals((w,)))
-		return logpw
+	def logpw(self, v, w):
+		logpv, logpw = self.f_logpw(*ndict.orderedvals((v,w)))
+		return logpv, logpw
 	
 	# Gradient of the prior: logp(w)
-	def dlogpw_dw(self, w):
-		w = ndict.ordered(w)
-		r = self.f_dlogpw_dw(*(w.values()))
-		return r[0], dict(zip(w.keys(), r[1:]))
+	def dlogpw_dw(self, v, w):
+		r = self.f_dlogpw_dw(*ndict.orderedvals((v,w)))
+		v, w = ndict.ordereddicts((v, w))
+		return r[0], r[1], dict(zip(v.keys(), r[2:2+len(v)])), dict(zip(w.keys(), r[2+len(v):2+len(v)+len(w)]))
 	
 	# Helper function that creates tiled version of datapoint 'x' (* n_batch)
 	def tiled_x(self, x, n_batch):

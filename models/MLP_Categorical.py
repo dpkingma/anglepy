@@ -4,6 +4,8 @@ import numpy as np
 
 import sys; sys.path.append('../../shared')
 import anglepy as ap
+from anglepy.misc import lazytheanofunc
+import anglepy.ndict as ndict
 
 # Write anglepy model
 class MLP_Categorical(ap.BNModel):
@@ -21,7 +23,7 @@ class MLP_Categorical(ap.BNModel):
 		
 		x = {}
 		x['x'] = T.dmatrix()
-		x['t'] = T.dmatrix()
+		x['y'] = T.dmatrix()
 		
 		z = {}
 		return w, x, z
@@ -37,6 +39,8 @@ class MLP_Categorical(ap.BNModel):
 			f = T.tanh
 		elif self.nonlinearity == 'sigmoid':
 			f = T.nnet.sigmoid
+		elif self.nonlinearity == 'softplus':
+			f = T.nnet.softplus
 		else:
 			raise Exception("Unknown nonlinarity "+self.nonlinearity)
 		
@@ -45,16 +49,36 @@ class MLP_Categorical(ap.BNModel):
 		for i in range(1, len(self.n_units)-1):
 			hiddens.append(T.dot(w['w'+str(i)], f(hiddens[-1])) + T.dot(w['b'+str(i)], A))
 		
-		p = T.nnet.softmax(hiddens[-1].T).T
-		logpx = - T.nnet.categorical_crossentropy(p.T, x['t'].T).T
+		self.p = T.nnet.softmax(hiddens[-1].T).T
+		self.entropy = T.nnet.categorical_crossentropy(self.p.T, self.p.T).T
+		
+		logpx = (- T.nnet.categorical_crossentropy(self.p.T, x['y'].T).T).reshape((1,-1))
+		
+		# function for distribution q(z|x)
+		theanofunc = lazytheanofunc('ignore', mode='FAST_RUN')
+		self.dist_px['y'] = theanofunc([x['x']] + w.values() + [A], self.p)
 		
 		logpz = 0 * A
-		return logpw, logpx, logpz, {'pt':(w.values() + [x['x'], A], p)}
+		return logpw, logpx, logpz
 		
-	def gen_xz(self, w, x, z):
-		if (not x.has_key('x') or x.has_key('t')):
+	def gen_xz(self, w, x, z, n_batch=0):
+		if not x.has_key('x'):
 			raise Exception('Not implemented')
-		return x, z, {}
+		
+		if n_batch == 0:
+			n_batch = x['x'].shape[1]
+		A = np.ones((1, n_batch))
+		
+		_z = {}
+		if not x.has_key('y'):
+			w = ndict.ordered(w)
+			py = self.dist_px['y'](*([x['x']] + w.values() + [A]))
+			_z['py'] = py
+			x['y'] = np.zeros(py.shape)
+			for i in range(n_batch):
+				x['y'][:,i] = np.random.multinomial(n=1, pvals=py[:,i])
+			
+		return x, z, _z
 	
 	def init_w(self, init_sd=1e-2):
 		w = {}
