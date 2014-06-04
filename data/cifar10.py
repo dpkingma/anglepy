@@ -3,7 +3,7 @@ import scipy.io
 import os
 
 # from http://cs.nyu.edu/~roweis/data.html
-path = os.path.dirname(__file__)+'/'
+path = os.environ['ML_DATA_PATH']+'/cifar10/'
 
 # Load the original images into numpy arrays
 def load_numpy():
