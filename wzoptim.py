@@ -336,7 +336,7 @@ def step_vae(model, x, v, w, n_batch=100, stepsize=1e-1, warmup=100, anneal=True
 		
 		# Update parameters
 		adagrad_reg = 1e-8
-		c = 1
+		c = 1.0
 		if not anneal: c /= nsteps[0]+1
 		for i in gv:
 			gv_ss[i] += gv[i]**2

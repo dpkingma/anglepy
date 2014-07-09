@@ -32,7 +32,7 @@ class VAEModel(object):
 		allvars = v.values() + w.values() + x.values() + z.values() + [A] # note: '+' concatenates lists
 		
 		# TODO: more beautiful/standardized way of setting distributions
-		# (should be even simpler then this) 
+		# (should be even simpler than this) 
 		self.dist_qz = {}
 		self.dist_px = {}
 		self.dist_pz = {}
