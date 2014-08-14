@@ -8,11 +8,12 @@ import math, inspect
 
 class MLBN(ap.BNModel):
 	
-	def __init__(self, n_hidden, n_basis, n_output, prior_sd=1, noMiddleEps=True, data='binary', nonlinear='tanh'):
+    # n_basis is first hidden layer
+	def __init__(self, n_hidden, n_basis, n_x, prior_sd=1, noMiddleEps=True, data='binary', nonlinear='softplus'):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
 		self.n_hidden = n_hidden
 		self.n_basis = n_basis
-		self.n_output = n_output
+		self.n_x = n_x
 		self.prior_sd = prior_sd
 		self.noMiddleEps = noMiddleEps
 		self.data = data
@@ -25,8 +26,8 @@ class MLBN(ap.BNModel):
 		hidden = []
 		hidden.append(z['eps0'])
 		
-		def f_softrect(x): return T.log(T.exp(x) + 1)# - np.log(2)
-		nonlinear = {'tanh': T.tanh, 'sigmoid': T.nnet.sigmoid, 'softrect': f_softrect}[self.nonlinear]
+		def f_softplus(x): return T.log(T.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': T.tanh, 'sigmoid': T.nnet.sigmoid, 'softplus': f_softplus}[self.nonlinear]
 
 		for i in range(1, len(self.n_hidden)):
 			h = nonlinear(T.dot(w['w'+str(i)], hidden[i-1]) + T.dot(w['b'+str(i)], A))
@@ -49,7 +50,7 @@ class MLBN(ap.BNModel):
 		else: raise Exception("")
 
 		# Note: logpx is a row vector (one element per sample)
-		logpx = T.dot(np.ones((1, self.n_output)), logpx) # logpx = log p(x|z,w)
+		logpx = T.dot(np.ones((1, self.n_x)), logpx) # logpx = log p(x|z,w)
 		
 		# Note: logpz is a row vector (one element per sample)
 		logpz = 0
@@ -66,7 +67,7 @@ class MLBN(ap.BNModel):
 		if self.data == 'sigmoidgaussian' or self.data == 'gaussian':
 			logpw += f_prior(w['out_logvar_w'])
 
-		return logpw, logpx, logpz, {}
+		return logpw, logpx, logpz
 	
 	# Confabulate latent variables
 	def gen_xz(self, w, x, z, n_batch):
@@ -80,8 +81,8 @@ class MLBN(ap.BNModel):
 		
 		#def f_sigmoid(x): return 1e-3 + (1-2e-3) * 1/(1+np.exp(-x))
 		def f_sigmoid(x): return 1./(1.+np.exp(-x))
-		def f_softrect(x): return np.log(np.exp(x) + 1)# - np.log(2)
-		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softrect': f_softrect}[self.nonlinear]
+		def f_softplus(x): return np.log(np.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softplus': f_softplus}[self.nonlinear]
 
 		for i in range(1, len(self.n_hidden)):
 			mean = nonlinear(np.dot(w['w'+str(i)], _z['z'+str(i-1)]) + np.dot(w['b'+str(i)], A))
@@ -122,8 +123,8 @@ class MLBN(ap.BNModel):
 		
 		#def f_sigmoid(x): return 1e-3 + (1-2e-3) * 1/(1+np.exp(-x))
 		def f_sigmoid(x): return 1./(1.+np.exp(-x))
-		def f_softrect(x): return np.log(np.exp(x) + 1)# - np.log(2)
-		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softrect': f_softrect}[self.nonlinear]
+		def f_softplus(x): return np.log(np.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softplus': f_softplus}[self.nonlinear]
 
 		for i in range(1, len(self.n_hidden)):
 			mean = nonlinear(np.dot(w['w'+str(i)], z['z'+str(i-1)]) + np.dot(w['b'+str(i)], A))
@@ -171,11 +172,11 @@ class MLBN(ap.BNModel):
 				w['logsd'+str(i)] = np.random.normal(0, std, size=(self.n_hidden[i], 1))
 		w['wbasis'] = np.random.normal(0, std, size=(self.n_basis, self.n_hidden[-1]))
 		w['bbasis'] = np.random.normal(0, std, size=(self.n_basis, 1))
-		w['wout'] = np.random.normal(0, std, size=(self.n_output, self.n_basis))
-		w['bout'] = np.random.normal(0, std, size=(self.n_output, 1))
+		w['wout'] = np.random.normal(0, std, size=(self.n_x, self.n_basis))
+		w['bout'] = np.random.normal(0, std, size=(self.n_x, 1))
 		if self.data == 'sigmoidgaussian' or self.data == 'gaussian':
-			w['out_logvar_w'] = np.random.normal(0, std, size=(self.n_output, self.n_hidden[-1]))
-			w['out_logvar_b'] = np.zeros((self.n_output, 1))
+			w['out_logvar_w'] = np.random.normal(0, std, size=(self.n_x, self.n_hidden[-1]))
+			w['out_logvar_b'] = np.zeros((self.n_x, 1))
 
 		return w
 	

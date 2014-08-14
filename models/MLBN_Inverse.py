@@ -8,7 +8,7 @@ import math, inspect
 import anglepy.ndict as ndict
 
 class MLBN_Inverse(BNModel):
-	def __init__(self, n_units, prior_sd=1, nonlinear='tanh'):
+	def __init__(self, n_units, prior_sd=1, nonlinear='softplus'):
 		self.constr = (__name__, inspect.stack()[0][3], locals())
 		self.n_units = n_units
 		self.prior_sd = prior_sd
@@ -24,8 +24,8 @@ class MLBN_Inverse(BNModel):
 		hidden = []
 		hidden.append(x['x'])
 		
-		def f_softrect(x): return T.log(T.exp(x) + 1)# - np.log(2)
-		nonlinear = {'tanh': T.tanh, 'sigmoid': T.nnet.sigmoid, 'softrect': f_softrect}[self.nonlinear]
+		def f_softplus(x): return T.log(T.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': T.tanh, 'sigmoid': T.nnet.sigmoid, 'softplus': f_softplus}[self.nonlinear]
 		
 		for i in range(1, len(self.n_units)-1):
 			hidden.append(nonlinear(T.dot(w['w_%i'%i], hidden[i-1]) + T.dot(w['b_'+str(i)], A)))
@@ -50,7 +50,7 @@ class MLBN_Inverse(BNModel):
 		logpw += f_prior(w['w_mean'])
 		logpw += f_prior(w['w_logvar'])
 		
-		return logpw, logpx, logpz, {}
+		return logpw, logpx, logpz
 	
 	# Confabulate hidden states 'z'
 	def gen_xz(self, w, x, z, n_batch):
@@ -60,8 +60,8 @@ class MLBN_Inverse(BNModel):
 			x['x'] = np.random.binomial(1, 0.5, size=(self.n_units[0], n_batch))
 		
 		def f_sigmoid(x): return 1./(1.+np.exp(-x))
-		def f_softrect(x): return np.log(np.exp(x) + 1)# - np.log(2)
-		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softrect': f_softrect}[self.nonlinear]
+		def f_softplus(x): return np.log(np.exp(x) + 1)# - np.log(2)
+		nonlinear = {'tanh': np.tanh, 'sigmoid': f_sigmoid,'softplus': f_softplus}[self.nonlinear]
 
 		hidden = []
 		hidden.append(x['x'])

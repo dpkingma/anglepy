@@ -14,7 +14,7 @@ Fully connected deep variational auto-encoder (VAE_Z_X)
 
 class VAE_Z_X(ap.VAEModel):
     
-    def __init__(self, n_x, n_hidden_q, n_z, n_hidden_p, nonlinear_q='tanh', nonlinear_p='tanh', type_px='bernoulli', type_qz='gaussianmarg', type_pz='gaussianmarg', prior_sd=1):
+    def __init__(self, n_x, n_hidden_q, n_z, n_hidden_p, nonlinear_q='tanh', nonlinear_p='tanh', type_px='bernoulli', type_qz='gaussianmarg', type_pz='gaussianmarg', prior_sd=1, var_smoothing=0):
         self.constr = (__name__, inspect.stack()[0][3], locals())
         self.n_x = n_x
         self.n_hidden_q = n_hidden_q
@@ -26,6 +26,7 @@ class VAE_Z_X(ap.VAEModel):
         self.type_qz = type_qz
         self.type_pz = type_pz
         self.prior_sd = prior_sd
+        self.var_smoothing = var_smoothing
         super(VAE_Z_X, self).__init__()
     
     def factors(self, v, w, x, z, A):
@@ -109,6 +110,14 @@ class VAE_Z_X(ap.VAEModel):
         elif self.type_qz == 'gaussian':
             logqz = ap.logpdfs.normal2(_z, q_mean, q_logvar).sum(axis=0, keepdims=True)
         else: raise Exception()
+                        
+        # [new part] Fisher divergence of latent variables
+        if self.var_smoothing > 0:
+            dlogq_dz = T.grad(logqz.sum(), _z) # gives error when using gaussianmarg instead of gaussian
+            dlogp_dz = T.grad((logpx + logpz).sum(), _z)
+            FD = 0.5 * ((dlogq_dz - dlogp_dz)**2).sum(axis=0, keepdims=True)
+            # [end new part]
+            logqz -= self.var_smoothing * FD
         
         # Note: logpv and logpw are a scalars
         def f_prior(_w, prior_sd=self.prior_sd):
@@ -128,7 +137,7 @@ class VAE_Z_X(ap.VAEModel):
             logpw += f_prior(w['out_logvar_w'])
         if self.type_pz == 'studentt':
             logpw += f_prior(w['logv'])
-            
+
         return logpv, logpw, logpx, logpz, logqz
     
     # Generate epsilon from prior

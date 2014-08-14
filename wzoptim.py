@@ -151,7 +151,7 @@ def loop_pvem(dostep, w, model, hook, hook_wavelength=2, n_iters=9999999):
 	print 'Optimization loop finished'
 
 # PVEM B (Predictive Variational EM)
-def step_pvem(model_q, model_p, x, w_q, n_batch=100, ada_stepsize=1e-1, warmup=10, reg=1e-8, convertImgs=False):
+def step_pvem(model_q, model_p, x, w_q, n_batch=100, ada_stepsize=1e-1, warmup=100, reg=1e-8, convertImgs=False):
 	print 'Predictive VEM', ada_stepsize
 	
 	hmc_steps=0
@@ -299,7 +299,7 @@ def loop_va(dostep, v, w, hook, dt_hook=2, n_iters=9999999):
 		n += 1
 		if t == 1 or t == n_iters-1 or time.time() - t_prev > dt_hook:
 			L /= n
-			hook(t, w, z, L)
+			hook(t, v, w, z, L)
 			L = 0
 			n = 0
 			t_prev = time.time()
