@@ -32,7 +32,6 @@ class VAE_Z_X_Y(ap.VAEModel):
         super(VAE_Z_X_Y, self).__init__()
     
     def factors(self, v, w, x, z, A):
-            
         '''
         z['eps'] are the independent epsilons (Gaussian with unit variance)
         x['x'] is the data

@@ -9,7 +9,7 @@ from anglepy.misc import lazytheanofunc
 import math, inspect
 
 '''
-Variational AE (SSDVAE) with P(Z)P(X|
+Variational AE (VAE) with P(Z)P(Y)P(X|Y,Z)
 '''
 
 class VAE_YZ_X(ap.VAEModel):

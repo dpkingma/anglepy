@@ -84,7 +84,7 @@ class VAE_Z_X(ap.VAEModel):
             x_mean = T.dot(w['out_w'], hidden_p[-1]) + T.dot(w['out_b'], A)
             if self.type_px == 'sigmoidgaussian':
                 x_mean = T.nnet.sigmoid(x_mean)
-            x_logvar = T.dot(w['out_logvar_w'], hidden_p[-1]) + T.dot(w['out_logvar_b'], A)
+            x_logvar = 0 * T.dot(w['out_logvar_w'], hidden_p[-1]) + T.dot(w['out_logvar_b'], A)
             _logpx = ap.logpdfs.normal2(x['x'], x_mean, x_logvar)
             self.dist_px['x'] = theanofunc([_z] + w.values() + [A], [x_mean, x_logvar])
         else: raise Exception("")
@@ -270,5 +270,10 @@ class VAE_Z_X(ap.VAEModel):
         if self.type_pz == 'studentt':
             w['logv'] = np.zeros((self.n_z, 1))
         
+        for _w in [v,w]:
+            for i in _w:
+                if len(_w[i].shape) == 2 and _w[i].shape[1] > 1:
+                    _w[i] /= std*np.sqrt(_w[i].shape[1])
+
         return v, w
     

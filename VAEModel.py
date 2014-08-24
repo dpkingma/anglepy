@@ -105,7 +105,9 @@ class VAEModel(object):
     
     
     def checknan(self, v, w, gv, gw):
+        
         if ndict.hasNaN(gv) or ndict.hasNaN(gw):
+                raise Exception("dL_dw(): NaN found in gradients")
                 #print 'logpx: ', logpx
                 #print 'logpz: ', logpz
                 #print 'logqz: ', logqz

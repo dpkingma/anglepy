@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import anglepy.ndict as ndict
 import scipy.stats
 import scipy.linalg

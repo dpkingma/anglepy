@@ -299,7 +299,7 @@ def loop_va(dostep, v, w, hook, dt_hook=2, n_iters=9999999):
         n += 1
         if t == 1 or t == n_iters-1 or time.time() - t_prev > dt_hook:
             L /= n
-            hook(t, v, w, z, L)
+            hook(t, v, w, L)
             L = 0
             n = 0
             t_prev = time.time()
@@ -499,8 +499,7 @@ def step_svb_blackbox(model_q, model_p, x, v, n_batch=10, n_subbatch=10, ada_ste
 '''
 Optimize a VAE with the Sum-Of-Functions optimizer by Jascha Sohl-Dickstein (2014)
 '''
-from sfo import SFO
-def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20):
+def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20, display=0):
     
     # create minibatches
     n_tot = x.itervalues().next().shape[1]
@@ -525,7 +524,7 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20)
         eps_minibatch = minibatch[2]
         
         # Get gradient
-        logpx, logpz, logqz, gv, gw = model.dL_dw(w['v'], w['w'], x_minibatch, eps_minibatch)        
+        logpx, logpz, logqz, gv, gw = model.dL_dw(w['v'], w['w'], x_minibatch, eps_minibatch)
         
         # Get gradient w.r.t. priors
         logpv, logpw, gv_prior, gw_prior = model.dlogpw_dw(w['v'], w['w'])
@@ -542,14 +541,24 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20)
         for i in gw: gw[i] *= -1./n_batch
         f *= -1./n_batch
         
-        #raise Exception()
+        L[0] += f
+        n_L[0] += 1
+        
+        #print 'norms gv:'
+        #ndict.pNorm(gv)
+        #print 'norms gw'
+        #ndict.pNorm(gw)
+        
         return f, {'v':gv,'w':gw}
     
     w_init = {'v':v_init, 'w':w_init}
     
-    optimizer = SFO(f_df, w_init, minibatches, display=0)
+    from sfo import SFO
+    optimizer = SFO(f_df, w_init, minibatches, display=display)
     
-    # plot the convergence trace
+    #optimizer.check_grad()
+    
+    # loop
     for i in range(n_passes):
         w = optimizer.optimize(num_passes=1)
         LB = L[0]/(1.*n_L[0])
@@ -562,3 +571,4 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20)
                 minibatches[j][2] = model.gen_eps(n_batch)
                 optimizer.replace_subfunction(j, False, minibatches[j])
         
+    print "Finished!"
