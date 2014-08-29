@@ -80,12 +80,18 @@ class VAE_Z_X(ap.VAEModel):
             p = T.nnet.sigmoid(T.dot(w['out_w'], hidden_p[-1]) + T.dot(w['out_b'], A))
             _logpx = - T.nnet.binary_crossentropy(p, x['x'])
             self.dist_px['x'] = theanofunc([_z] + w.values() + [A], p)
-        elif self.type_px == 'gaussian'or self.type_px == 'sigmoidgaussian':
+        elif self.type_px == 'gaussian':
             x_mean = T.dot(w['out_w'], hidden_p[-1]) + T.dot(w['out_b'], A)
-            if self.type_px == 'sigmoidgaussian':
-                x_mean = T.nnet.sigmoid(x_mean)
-            x_logvar = 0 * T.dot(w['out_logvar_w'], hidden_p[-1]) + T.dot(w['out_logvar_b'], A)
+            x_logvar = T.dot(w['out_logvar_w'], hidden_p[-1]) + T.dot(w['out_logvar_b'], A)
             _logpx = ap.logpdfs.normal2(x['x'], x_mean, x_logvar)
+            self.dist_px['x'] = theanofunc([_z] + w.values() + [A], [x_mean, x_logvar])
+        elif self.type_px == 'bounded01':
+            x_mean = T.nnet.sigmoid(T.dot(w['out_w'], hidden_p[-1]) + T.dot(w['out_b'], A))
+            x_logvar = T.dot(w['out_logvar_b'], A)
+            _logpx = ap.logpdfs.normal2(x['x'], x_mean, x_logvar)
+            # Make it a mixture between uniform and Gaussian
+            w_unif = T.nnet.sigmoid(T.dot(w['out_unif'], A))
+            _logpx = T.log(w_unif + (1-w_unif) * T.exp(_logpx))
             self.dist_px['x'] = theanofunc([_z] + w.values() + [A], [x_mean, x_logvar])
         else: raise Exception("")
             
@@ -120,8 +126,13 @@ class VAE_Z_X(ap.VAEModel):
             logqz -= self.var_smoothing * FD
         
         # Note: logpv and logpw are a scalars
-        def f_prior(_w, prior_sd=self.prior_sd):
-            return ap.logpdfs.normal(_w, 0, prior_sd).sum()
+        if True:
+            def f_prior(_w, prior_sd=self.prior_sd):
+                return ap.logpdfs.normal(_w, 0, prior_sd).sum()
+        else:
+            def f_prior(_w, prior_sd=self.prior_sd):
+                return ap.logpdfs.standard_laplace(_w / prior_sd).sum()
+            
         logpv = 0
         for i in range(len(self.n_hidden_q)):
             logpv += f_prior(v['w'+str(i)])
@@ -133,7 +144,7 @@ class VAE_Z_X(ap.VAEModel):
         for i in range(len(self.n_hidden_p)):
             logpw += f_prior(w['w'+str(i)])
         logpw += f_prior(w['out_w'])
-        if self.type_px in ['sigmoidgaussian', 'gaussian']:
+        if self.type_px == 'gaussian':
             logpw += f_prior(w['out_logvar_w'])
         if self.type_pz == 'studentt':
             logpw += f_prior(w['logv'])
@@ -182,12 +193,12 @@ class VAE_Z_X(ap.VAEModel):
             _z['x'] = p
             if not x.has_key('x'):
                 x['x'] = np.random.binomial(n=1,p=p)
-        elif self.type_px == 'sigmoidgaussian' or self.type_px == 'gaussian':
+        elif self.type_px == 'bounded01' or self.type_px == 'gaussian':
             x_mean, x_logvar = self.dist_px['x'](*([z['z']] + w.values() + [A]))
             _z['x'] = x_mean
             if not x.has_key('x'):
                 x['x'] = np.random.normal(x_mean, np.exp(x_logvar/2))
-                if self.type_px == 'sigmoidgaussian':
+                if self.type_px == 'bounded01':
                     x['x'] = np.maximum(np.zeros(x['x'].shape), x['x'])
                     x['x'] = np.minimum(np.ones(x['x'].shape), x['x'])
         
@@ -215,9 +226,13 @@ class VAE_Z_X(ap.VAEModel):
         w['out_w'] = T.dmatrix('out_w')
         w['out_b'] = T.dmatrix('out_b')
         
-        if self.type_px == 'sigmoidgaussian' or self.type_px == 'gaussian':
+        if self.type_px == 'gaussian':
             w['out_logvar_w'] = T.dmatrix('out_logvar_w')
             w['out_logvar_b'] = T.dmatrix('out_logvar_b')
+        
+        if self.type_px == 'bounded01':
+            w['out_logvar_b'] = T.dmatrix('out_logvar_b')
+            w['out_unif'] = T.dmatrix('out_unif')
             
         if self.type_pz == 'studentt':
             w['logv'] = T.dmatrix('logv')
@@ -233,6 +248,8 @@ class VAE_Z_X(ap.VAEModel):
     def init_w(self, std=1e-2):
         
         def rand(size):
+            if len(size) == 2 and size[1] > 1:
+                return np.random.normal(0, 1, size=size) / np.sqrt(size[1])
             return np.random.normal(0, std, size=size)
         
         v = {}
@@ -257,23 +274,24 @@ class VAE_Z_X(ap.VAEModel):
                 w['b'+str(i)] = rand((self.n_hidden_p[i], 1))
             w['out_w'] = rand((self.n_x, self.n_hidden_p[-1]))
             w['out_b'] = np.zeros((self.n_x, 1))
-            if self.type_px in ['sigmoidgaussian', 'gaussian']:
+            if self.type_px == 'gaussian':
                 w['out_logvar_w'] = rand((self.n_x, self.n_hidden_p[-1]))
                 w['out_logvar_b'] = np.zeros((self.n_x, 1))
+            if self.type_px == 'bounded01':
+                w['out_logvar_b'] = np.zeros((self.n_x, 1))
+                w['out_unif'] = np.zeros((self.n_x, 1))
+                
         else:
             w['out_w'] = rand((self.n_x, self.n_z))
             w['out_b'] = np.zeros((self.n_x, 1))
-            if self.type_px in ['sigmoidgaussian', 'gaussian']:
+            if self.type_px == 'gaussian':
                 w['out_logvar_w'] = rand((self.n_x, self.n_z))
                 w['out_logvar_b'] = np.zeros((self.n_x, 1))
-        
+            if self.type_px == 'bounded01':
+                w['out_logvar_b'] = np.zeros((self.n_x, 1))
+                w['out_unif'] = np.zeros((self.n_x, 1))
+
         if self.type_pz == 'studentt':
             w['logv'] = np.zeros((self.n_z, 1))
         
-        for _w in [v,w]:
-            for i in _w:
-                if len(_w[i].shape) == 2 and _w[i].shape[1] > 1:
-                    _w[i] /= std*np.sqrt(_w[i].shape[1])
-
         return v, w
-    

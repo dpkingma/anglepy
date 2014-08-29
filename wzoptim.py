@@ -498,8 +498,11 @@ def step_svb_blackbox(model_q, model_p, x, v, n_batch=10, n_subbatch=10, ada_ste
 
 '''
 Optimize a VAE with the Sum-Of-Functions optimizer by Jascha Sohl-Dickstein (2014)
+
+n_resample = number of iterations before resampling each minibatch. '0' means no resampling.
+resample_keepmem: Keep batch memory when resampling
 '''
-def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20, display=0):
+def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_resample=20, resample_keepmem=False, display=0):
     
     # create minibatches
     n_tot = x.itervalues().next().shape[1]
@@ -541,9 +544,6 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20,
         for i in gw: gw[i] *= -1./n_batch
         f *= -1./n_batch
         
-        L[0] += f
-        n_L[0] += 1
-        
         #print 'norms gv:'
         #ndict.pNorm(gv)
         #print 'norms gw'
@@ -567,8 +567,8 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_reset=20,
         n_L[0] = 0
         # Reset noise epsilon of some minibatches
         for j in range(n_minibatches):
-            if i%n_reset == j%n_reset:
+            if n_resample > 0 and i%n_resample == j%n_resample:
                 minibatches[j][2] = model.gen_eps(n_batch)
-                optimizer.replace_subfunction(j, False, minibatches[j])
+                optimizer.replace_subfunction(j, resample_keepmem, minibatches[j])
         
     print "Finished!"
