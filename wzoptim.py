@@ -502,7 +502,10 @@ Optimize a VAE with the Sum-Of-Functions optimizer by Jascha Sohl-Dickstein (201
 n_resample = number of iterations before resampling each minibatch. '0' means no resampling.
 resample_keepmem: Keep batch memory when resampling
 '''
-def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_resample=20, resample_keepmem=False, display=0):
+def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_resample=20, resample_keepmem=False, bernoulli_x=False, display=0):
+    
+    # Shuffle columns of dataset x
+    ndict.shuffleCols(x)
     
     # create minibatches
     n_tot = x.itervalues().next().shape[1]
@@ -510,12 +513,15 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_resample=
     n_minibatches = n_tot / n_batch
     if (n_tot%n_batch) != 0: raise Exception()
     
-    for i in range(n_minibatches):
-        ifrom = i * n_batch
-        ito = (i+1) * n_batch
-        _x = ndict.getCols(x, ifrom, ito)
+    # Divide into minibatches
+    def make_minibatch(i):
+        _x = ndict.getCols(x, i * n_batch, (i+1) * n_batch)
         _eps = model.gen_eps(n_batch)
-        minibatches.append([i, _x, _eps])
+        if bernoulli_x: _x['x'] = np.random.binomial(n=1, p=_x['x'])
+        return [i, _x, _eps]
+
+    for i in range(n_minibatches):
+        minibatches.append(make_minibatch(i))
       
     L = [0.]
     n_L = [0]
@@ -568,7 +574,7 @@ def optim_vae_sfo(model, x, v_init, w_init, n_batch, n_passes, hook, n_resample=
         # Reset noise epsilon of some minibatches
         for j in range(n_minibatches):
             if n_resample > 0 and i%n_resample == j%n_resample:
-                minibatches[j][2] = model.gen_eps(n_batch)
+                minibatches[j] = make_minibatch(j)
                 optimizer.replace_subfunction(j, resample_keepmem, minibatches[j])
         
     print "Finished!"

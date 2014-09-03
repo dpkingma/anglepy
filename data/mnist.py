@@ -41,8 +41,11 @@ def load_numpy(size=28, binarize_y=False):
     return train_x.T, train_y, valid_x.T, valid_y, test_x.T, test_y
 
 # Loads data where data is split into class labels
-def load_numpy_split(size=28, binarize_y=False):
+def load_numpy_split(size=28, binarize_y=False, n_train=50000):
     train_x, train_y, valid_x, valid_y, test_x, test_y = load_numpy(size,False)
+    
+    train_x = train_x[0:n_train]
+    train_y = train_y[0:n_train]
     
     def split_by_class(x, y, num_classes):
         result_x = [0]*num_classes

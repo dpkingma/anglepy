@@ -171,6 +171,15 @@ def orderedvals(ds):
         vals += ordered(d).values()
     return vals
 
+# Shuffle all elements of ndict
+# Assumes that each element of dict has some number of columns!
+def shuffleCols(d):
+    n_cols = d.itervalues().next().shape[1]
+    idx = np.arange(n_cols)
+    np.random.shuffle(idx)
+    for i in d:
+        d[i] = d[i][:,idx]
+    
 # Save/Load ndict to compressed file
 # (a gzipped tar file, i.e. .tar.gz)
 # if addext=True, then '.ndict' will be appended to filename
