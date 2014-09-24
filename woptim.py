@@ -25,7 +25,7 @@ def loop(dostep, w, hook, hook_wavelength=2, n_iters=9999999):
         return ll
     for t in xrange(1, n_iters):
         loglik = dostep(w)
-        #print loglik
+        #print time.time() - t_prev, loglik
         logliks[0].append(loglik)
         if time.time() - t_prev > hook_wavelength:
             hook(t, w, getLoglik())
@@ -68,6 +68,111 @@ def step_adagrad(func, w, stepsize=0.1, warmup=10, anneal=True, decay=0):
         return logpwxz
     return doStep
 
+# RMSPROP objective
+def step_rmsprop(w, model, x, prior_sd=1, n_batch=100, stepsize=1e-2, lambd=1e-2, warmup=10):
+    print 'RMSprop', stepsize
+    # sum of squares of gradients and delta's of z's and w's
+    gw_ss = ndict.cloneZeros(w)
+    n_datapoints = x.itervalues().next().shape[1]
+    
+    batchi = [0]
+    
+    def doStep(w):
+        
+        # Pick random minibatch
+        idx = np.random.randint(0, n_datapoints, size=(n_batch,))
+        _x = ndict.getColsFromIndices(x, idx)
+        
+        # Evaluate likelihood and its gradient
+        logpx, _, gw, _ = model.dlogpxz_dwz(w, _x, {})
+        
+        for i in w:
+            gw[i] *= n_datapoints / n_batch
+        
+        # Evalute prior and its gradient
+        logpw = 0
+        for i in w:
+            logpw -= (.5 * (w[i]**2) / (prior_sd**2)).sum()
+            gw[i] -= w[i] / (prior_sd**2)
+        
+        for i in gw:
+            #print i, np.sqrt(gw_ss[i]).max(), np.sqrt(gw_ss[i]).min()
+            gw_ss[i] += lambd * (gw[i]**2 - gw_ss[i])
+            if batchi[0] < warmup: continue
+            w[i] += stepsize * gw[i] / np.sqrt(gw_ss[i] + 1e-8)
+        
+        batchi[0] += 1
+        
+        return logpx + logpw
+
+    return doStep
+
+# RMSPROP objective
+def step_woga(w, funcs, func_holdout, stepsize=1e-2, lambd=1e-2, warmup=10):
+    print 'WOGA', stepsize
+    
+    batchi = [0]
+    
+    m1 = [ndict.cloneZeros(w) for i in range(len(funcs))]
+    m2 = [ndict.cloneZeros(w) for i in range(len(funcs))]
+    m1_holdout = ndict.cloneZeros(w)
+    m2_holdout = ndict.cloneZeros(w)
+    
+    def doStep(w):
+        
+        f_holdout, gw_holdout = func_holdout(w)
+        gw_holdout_norm = 0
+        gw_holdout_effective = ndict.clone(gw_holdout)
+        for i in w:
+            m1_holdout[i] += lambd * (gw_holdout[i] - m1_holdout[i])
+            m2_holdout[i] += lambd * (gw_holdout[i]**2 - m2_holdout[i])
+            gw_holdout_effective[i] /= np.sqrt(m2_holdout[i] + 1e-8)
+            gw_holdout_norm += (gw_holdout_effective[i]**2).sum()
+        gw_holdout_norm = np.sqrt(gw_holdout_norm)
+        
+        f_tot = 0
+        gw_tot = ndict.cloneZeros(w)
+        alphas = []
+        for j in range(len(funcs)):
+            f, gw = funcs[j](w)
+            f_tot += f
+            
+            gw_norm = 0
+            gw_effective = ndict.clone(gw)
+            for i in w:
+                # Update first and second moments
+                m1[j][i] += lambd * (gw[i] - m1[j][i])
+                m2[j][i] += lambd * (gw[i]**2 - m2[j][i])
+                gw_effective[i] /= np.sqrt(m2[j][i] + 1e-8)
+                gw_norm += (gw_effective[i]**2).sum()
+            gw_norm = np.sqrt(gw_norm)
+            
+            # Compute dot product with holdout gradient
+            alpha = 0
+            for i in w:
+                alpha += (gw_effective[i] * gw_holdout_effective[i]).sum()
+            alpha /= gw_holdout_norm * gw_norm
+            
+            alphas.append(alpha)
+            
+            #alpha = (alpha > 0) * 1.0
+            
+            for i in w:
+                # Accumulate gradient of subobjective
+                gw_tot[i] += alpha * gw[i] / np.sqrt(m2[j][i] + 1e-8)
+            
+        #print 'alphas:', alphas
+        
+        if batchi[0] > warmup:
+            for i in w:
+                w[i] += stepsize * gw_tot[i]
+        
+        
+        batchi[0] += 1
+        
+        return f_tot
+
+    return doStep
 
 # AdaDelta (Matt Zeiler)
 def step_adadelta(func, w, gamma=0.05, eps=1e-6):
